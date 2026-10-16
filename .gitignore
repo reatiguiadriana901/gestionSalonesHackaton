@@ -1,0 +1,15 @@
+# Secretos: nunca subir el archivo .env (usa .env.example como plantilla)
+.env
+.env.*
+!.env.example
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Varios
+*.log
+node_modules/

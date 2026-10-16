@@ -1,0 +1,215 @@
+/* =====================================================================
+   Estilos propios de cada vista
+   ===================================================================== */
+
+/* ---------- Panel ---------- */
+.lista-items {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lista-items__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--esp-3);
+  padding: var(--esp-3) 0;
+  border-bottom: 1px solid var(--color-borde);
+  font-size: var(--texto-sm);
+}
+
+.lista-items__item:last-child {
+  border-bottom: none;
+}
+
+.lista-items__principal {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lista-items__titulo {
+  font-weight: 600;
+}
+
+.linea-tiempo {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.linea-tiempo__item {
+  position: relative;
+  padding: 0 0 var(--esp-3) var(--esp-5);
+  font-size: var(--texto-sm);
+}
+
+.linea-tiempo__item::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-primario);
+}
+
+.linea-tiempo__item::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 18px;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-borde);
+}
+
+.linea-tiempo__item:last-child::after {
+  display: none;
+}
+
+/* ---------- Resultados de IA ---------- */
+.resultado-ia {
+  border: 1px solid color-mix(in srgb, var(--color-ia) 35%, transparent);
+  background: linear-gradient(180deg, var(--color-ia-suave), var(--color-superficie) 70%);
+}
+
+.resultado-ia__titulo {
+  display: flex;
+  align-items: center;
+  gap: var(--esp-2);
+  color: var(--color-ia);
+  font-weight: 700;
+}
+
+.resultado-ia__titulo svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.resultado-ia--regla {
+  border-color: var(--color-aviso);
+  background: linear-gradient(180deg, var(--color-aviso-suave), var(--color-superficie) 70%);
+}
+
+.resultado-ia--regla .resultado-ia__titulo {
+  color: var(--color-aviso);
+}
+
+.espacio-sugerido {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-1);
+  padding: var(--esp-4);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio);
+  background: var(--color-superficie);
+}
+
+.espacio-sugerido--principal {
+  border: 2px solid var(--color-ia);
+}
+
+.cargando-ia {
+  display: flex;
+  align-items: center;
+  gap: var(--esp-3);
+  padding: var(--esp-4);
+  border-radius: var(--radio);
+  background: var(--color-ia-suave);
+  color: var(--color-ia);
+  font-weight: 600;
+}
+
+/* ---------- Incidencias ---------- */
+.incidencia {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-2);
+  padding: var(--esp-4);
+  border: 1px solid var(--color-borde);
+  border-left: 4px solid var(--prioridad-color, var(--color-borde-fuerte));
+  border-radius: var(--radio);
+  background: var(--color-superficie);
+}
+
+.incidencia--critica { --prioridad-color: var(--color-peligro); }
+.incidencia--alta { --prioridad-color: var(--color-aviso); }
+.incidencia--media { --prioridad-color: var(--color-info); }
+.incidencia--baja { --prioridad-color: var(--color-exito); }
+
+.incidencia__descripcion {
+  color: var(--color-texto-suave);
+  font-size: var(--texto-sm);
+}
+
+.incidencia__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--esp-2) var(--esp-4);
+  color: var(--color-texto-tenue);
+  font-size: var(--texto-xs);
+}
+
+/* ---------- Datos / importación ---------- */
+.zona-archivos {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--esp-2);
+  padding: var(--esp-6) var(--esp-4);
+  border: 2px dashed var(--color-borde-fuerte);
+  border-radius: var(--radio-lg);
+  background: var(--color-superficie-2);
+  color: var(--color-texto-suave);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transicion), background var(--transicion);
+}
+
+.zona-archivos:hover,
+.zona-archivos--activa {
+  border-color: var(--color-primario);
+  background: var(--color-primario-suave);
+}
+
+.zona-archivos svg {
+  width: 36px;
+  height: 36px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-3);
+  padding: var(--esp-4);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio);
+}
+
+.lote .control {
+  width: auto;
+}
+
+.lote__resumen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--esp-2);
+}

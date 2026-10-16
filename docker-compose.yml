@@ -1,0 +1,151 @@
+
+name: campus-gestion
+
+services:
+
+  # ============================================================
+  # 1. BASE DE DATOS POSTGRESQL
+  # ============================================================
+  db:
+    build:
+      context: ./backend/database
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${DB_NAME:-campus}
+      POSTGRES_USER: ${DB_USER:-campus}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-lavidaesunbanano}
+      TZ: America/Bogota
+
+    ports:
+      - "${DB_PUERTO_HOST:-5433}:5432"
+
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+    networks:
+      - campus_network
+
+  # ============================================================
+  # 2. BACKEND - N8N
+  # ============================================================
+  backend:
+    build:
+      context: ./backend
+
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      # Conexión con PostgreSQL
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-campus}
+      DB_USER: ${DB_USER:-campus}
+      DB_PASSWORD: ${DB_PASSWORD:-lavidaesunbanano}
+
+      # Configuración n8n
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-clave-por-defecto-campus-2026}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      GENERIC_TIMEZONE: America/Bogota
+      TZ: America/Bogota
+
+      WEBHOOK_URL: http://localhost:${N8N_PUERTO_HOST:-5678}/
+
+      N8N_FORZAR_IMPORTACION: ${N8N_FORZAR_IMPORTACION:-false}
+
+      # Inteligencia Artificial
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_EFFORT: ${AI_EFFORT:-low}
+      AI_JSON_MODE: ${AI_JSON_MODE:-json_schema}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-90000}
+      ANTHROPIC_FALLBACKS: ${ANTHROPIC_FALLBACKS:-default}
+
+    ports:
+      - "${N8N_PUERTO_HOST:-5678}:5678"
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - campus_network
+
+  # ============================================================
+  # 3. FRONTEND - NGINX
+  # ============================================================
+  frontend:
+    build:
+      context: ./frontend
+
+    restart: unless-stopped
+
+    depends_on:
+      - backend
+
+    environment:
+      BACKEND_URL: http://backend:5678
+      TZ: America/Bogota
+
+    ports:
+      - "${FRONTEND_PUERTO_HOST:-8080}:80"
+
+    networks:
+      - campus_network
+
+  # ============================================================
+  # 4. OLLAMA - INTELIGENCIA ARTIFICIAL LOCAL (OPCIONAL)
+  # ============================================================
+  ollama:
+    image: ollama/ollama:0.40.2
+
+    profiles:
+      - ia-local
+
+    restart: unless-stopped
+
+    environment:
+      TZ: America/Bogota
+
+    ports:
+      - "11434:11434"
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    networks:
+      - campus_network
+
+# ==============================================================
+# VOLÚMENES PERSISTENTES
+# ==============================================================
+volumes:
+  db_data:
+  n8n_data:
+  ollama_data:
+
+# ==============================================================
+# RED INTERNA
+# ==============================================================
+networks:
+  campus_network:
+    driver: bridge

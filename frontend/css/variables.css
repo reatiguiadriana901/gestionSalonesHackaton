@@ -1,0 +1,107 @@
+/* =====================================================================
+   Tokens de diseño: colores, tipografía, espaciado, bordes y sombras.
+   Cambiar un valor aquí cambia toda la interfaz.
+   ===================================================================== */
+:root {
+  color-scheme: light;
+
+  /* Superficies y texto */
+  --color-fondo: #f4f5f9;
+  --color-superficie: #ffffff;
+  --color-superficie-2: #f7f8fb;
+  --color-borde: #e2e5ee;
+  --color-borde-fuerte: #cdd2df;
+  --color-texto: #1b2132;
+  --color-texto-suave: #5a6377;
+  --color-texto-tenue: #8a92a6;
+
+  /* Marca y estados */
+  --color-primario: #4f46e5;
+  --color-primario-hover: #4338ca;
+  --color-primario-suave: #eef0ff;
+  --color-exito: #15803d;
+  --color-exito-suave: #dcfce7;
+  --color-aviso: #b45309;
+  --color-aviso-suave: #fef3c7;
+  --color-peligro: #c81e1e;
+  --color-peligro-suave: #fde2e2;
+  --color-info: #0369a1;
+  --color-info-suave: #e0f2fe;
+  --color-neutro: #4b5563;
+  --color-neutro-suave: #eceef3;
+  --color-ia: #7c3aed;
+  --color-ia-suave: #f1e9ff;
+
+  /* Barra lateral */
+  --color-lateral: #121829;
+  --color-lateral-texto: #c5cbe0;
+  --color-lateral-activo: #1f2740;
+
+  /* Tipografía */
+  --fuente: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --fuente-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  --texto-xs: 0.75rem;
+  --texto-sm: 0.8125rem;
+  --texto-base: 0.9375rem;
+  --texto-lg: 1.125rem;
+  --texto-xl: 1.375rem;
+  --texto-2xl: 1.75rem;
+
+  /* Espaciado */
+  --esp-1: 0.25rem;
+  --esp-2: 0.5rem;
+  --esp-3: 0.75rem;
+  --esp-4: 1rem;
+  --esp-5: 1.5rem;
+  --esp-6: 2rem;
+
+  /* Bordes, sombras y movimiento */
+  --radio-sm: 6px;
+  --radio: 10px;
+  --radio-lg: 14px;
+  --sombra: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --sombra-elevada: 0 12px 32px rgb(16 24 40 / 18%);
+  --transicion: 160ms ease;
+
+  /* Estructura */
+  --ancho-lateral: 250px;
+  --ancho-contenido: 1280px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --color-fondo: #0d111c;
+    --color-superficie: #151b2b;
+    --color-superficie-2: #1a2134;
+    --color-borde: #262f45;
+    --color-borde-fuerte: #36405a;
+    --color-texto: #e6e9f2;
+    --color-texto-suave: #a6aec4;
+    --color-texto-tenue: #737d96;
+
+    --color-primario: #8b85ff;
+    --color-primario-hover: #a29dff;
+    --color-primario-suave: #232552;
+    --color-exito: #4ade80;
+    --color-exito-suave: #11301f;
+    --color-aviso: #fbbf24;
+    --color-aviso-suave: #352a0c;
+    --color-peligro: #f87171;
+    --color-peligro-suave: #3a1518;
+    --color-info: #38bdf8;
+    --color-info-suave: #0c2a3b;
+    --color-neutro: #b4bbcc;
+    --color-neutro-suave: #222a3d;
+    --color-ia: #b794ff;
+    --color-ia-suave: #2a1d47;
+
+    --color-lateral: #0a0e18;
+    --color-lateral-texto: #a8b0c8;
+    --color-lateral-activo: #1a2134;
+
+    --sombra: 0 1px 2px rgb(0 0 0 / 30%);
+    --sombra-elevada: 0 12px 32px rgb(0 0 0 / 50%);
+  }
+}

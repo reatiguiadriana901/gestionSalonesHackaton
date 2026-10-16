@@ -1,0 +1,778 @@
+{
+  "id": "campusDatos000001",
+  "name": "Datos · Importación del dataset",
+  "nodes": [
+    {
+      "name": "Nota · POST importar",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### POST /importar ★ (RN-14)\n`{ entidad, archivo, registros: [...] }`\nCada registro se normaliza y valida (campos, tipos, catálogos, duplicados, referencias, aforo, cruces, préstamos activos). Solo se insertan los válidos; los rechazados quedan con su fila y motivo en `importaciones`.\nOrden recomendado: espacios → recursos → reservas → préstamos → incidencias.",
+        "height": 300,
+        "width": 400,
+        "color": 7
+      },
+      "id": "71ac67d5-338b-49b6-a420-a6b59cfe759d",
+      "position": [
+        -460,
+        -40
+      ]
+    },
+    {
+      "name": "POST /importar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "9e55191c-647a-44c4-a0ae-1821163fc41c",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "importar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f2b12089-32d9-4d4a-aa85-b417a8556f56",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Datos existentes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  to_char(LOCALTIMESTAMP, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS ahora,\n  (SELECT COALESCE(json_agg(json_build_object('id', id, 'codigo', codigo, 'capacidad', capacidad, 'estado', estado)), '[]'::json)\n     FROM espacios) AS espacios,\n  (SELECT COALESCE(json_agg(json_build_object('id', id, 'codigo', codigo, 'estado', estado)), '[]'::json)\n     FROM recursos) AS recursos,\n  (SELECT COALESCE(json_agg(json_build_object('espacio_id', espacio_id, 'fecha', fecha,\n                                              'hora_inicio', to_char(hora_inicio, 'HH24:MI'),\n                                              'hora_fin', to_char(hora_fin, 'HH24:MI'))), '[]'::json)\n     FROM reservas WHERE estado = 'activa') AS reservas_activas,\n  (SELECT COALESCE(json_agg(json_build_object('recurso_id', recurso_id)), '[]'::json)\n     FROM prestamos WHERE estado = 'activo') AS prestamos_activos,\n  (SELECT json_agg(json_build_object('codigo', codigo, 'nombre', nombre)) FROM categorias_incidencia) AS categorias,\n  (SELECT json_agg(json_build_object('codigo', codigo, 'nombre', nombre)) FROM areas_responsables) AS areas;",
+        "options": {}
+      },
+      "id": "c687bdc4-04e1-443b-ae6f-929a286555b4",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "Validar registros (RN-14)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  VALIDACIÓN DEL DATASET (RN-14)\n//  Cada registro se normaliza y valida ANTES de tocar la base de datos.\n//  - Los inválidos se rechazan con su número de fila y el motivo exacto.\n//  - Las suposiciones (p. ej. un estado vacío tomado como \"disponible\")\n//    quedan registradas como advertencias: nada se corrige en silencio.\n//  - Las reglas de negocio también aplican a los datos históricos:\n//    aforo, cruces de horario, un préstamo activo por recurso, etc.\n// =====================================================================\nconst MAX_REGISTROS = 5000;\n\n// Nombres de columna aceptados por entidad, en orden de preferencia.\n// Si el dataset oficial usa otro nombre, basta con agregarlo aquí.\nconst ALIAS = {\n  espacios: {\n    codigo: ['codigo', 'cod', 'code', 'codigo_espacio', 'id_espacio', 'espacio_id', 'id'],\n    nombre: ['nombre', 'name', 'nombre_espacio', 'espacio'],\n    tipo: ['tipo', 'type', 'tipo_espacio', 'categoria'],\n    capacidad: ['capacidad', 'aforo', 'capacity', 'cupo', 'cupos', 'capacidad_maxima'],\n    ubicacion: ['ubicacion', 'location', 'piso', 'bloque', 'sede', 'edificio'],\n    equipamiento: ['equipamiento', 'equipos', 'dotacion', 'equipment', 'recursos'],\n    estado: ['estado', 'status', 'state'],\n  },\n  recursos: {\n    codigo: ['codigo', 'cod', 'code', 'placa', 'serial', 'codigo_recurso', 'id_recurso', 'recurso_id', 'id'],\n    nombre: ['nombre', 'name', 'equipo', 'descripcion', 'recurso'],\n    tipo: ['tipo', 'type', 'categoria', 'tipo_recurso'],\n    espacio: ['espacio', 'espacio_codigo', 'codigo_espacio', 'espacio_id', 'id_espacio', 'ubicacion', 'aula'],\n    estado: ['estado', 'status', 'state'],\n  },\n  reservas: {\n    espacio: ['espacio', 'espacio_codigo', 'codigo_espacio', 'espacio_id', 'id_espacio', 'aula'],\n    solicitante: ['solicitante', 'responsable', 'reservado_por', 'usuario', 'persona', 'nombre'],\n    motivo: ['motivo', 'proposito', 'actividad', 'descripcion'],\n    asistentes: ['asistentes', 'participantes', 'personas', 'cantidad', 'numero_asistentes'],\n    fecha: ['fecha', 'date', 'dia', 'fecha_reserva'],\n    hora_inicio: ['hora_inicio', 'inicio', 'desde', 'start', 'hora_desde'],\n    hora_fin: ['hora_fin', 'fin', 'hasta', 'end', 'hora_hasta'],\n    estado: ['estado', 'status'],\n  },\n  prestamos: {\n    recurso: ['recurso', 'recurso_codigo', 'codigo_recurso', 'recurso_id', 'id_recurso', 'equipo', 'placa'],\n    solicitante: ['solicitante', 'responsable', 'prestado_a', 'usuario', 'persona', 'nombre'],\n    fecha_prestamo: ['fecha_prestamo', 'fecha_inicio', 'prestado_en', 'fecha_entrega', 'inicio', 'fecha'],\n    fecha_limite: ['fecha_limite', 'fecha_devolucion_esperada', 'fecha_vencimiento', 'vence', 'limite', 'fecha_fin'],\n    fecha_devolucion: ['fecha_devolucion', 'devuelto_en', 'fecha_devolucion_real', 'fecha_retorno'],\n    estado: ['estado', 'status'],\n    observaciones: ['observaciones', 'notas', 'comentarios'],\n  },\n  incidencias: {\n    descripcion: ['descripcion', 'detalle', 'description', 'reporte', 'texto', 'asunto'],\n    reportado_por: ['reportado_por', 'reportante', 'reporta', 'usuario', 'solicitante'],\n    espacio: ['espacio', 'espacio_codigo', 'codigo_espacio', 'espacio_id', 'id_espacio', 'aula'],\n    recurso: ['recurso', 'recurso_codigo', 'codigo_recurso', 'recurso_id', 'id_recurso', 'equipo'],\n    categoria: ['categoria', 'category', 'tipo'],\n    prioridad: ['prioridad', 'priority', 'urgencia'],\n    area_responsable: ['area_responsable', 'area', 'responsable'],\n    estado: ['estado', 'status'],\n    fecha: ['fecha', 'fecha_reporte', 'creado_en', 'created_at'],\n  },\n};\n\n// Valores aceptados por catálogo (escritos sin tildes y en minúsculas)\nconst ESTADOS = {\n  espacios: {\n    disponible: ['activo', 'activa', 'habilitado', 'habilitada', 'libre', 'operativo', 'operativa', 'available', 'ok'],\n    mantenimiento: ['en mantenimiento', 'reparacion', 'en reparacion', 'maintenance'],\n    inhabilitado: ['inhabilitada', 'deshabilitado', 'deshabilitada', 'fuera de servicio', 'cerrado', 'cerrada', 'inactivo', 'inactiva', 'disabled'],\n  },\n  recursos: {\n    disponible: ['activo', 'habilitado', 'libre', 'operativo', 'funcional', 'available', 'ok', 'bueno'],\n    mantenimiento: ['en mantenimiento', 'reparacion', 'en reparacion', 'danado', 'averiado', 'maintenance'],\n    baja: ['dado de baja', 'retirado', 'obsoleto'],\n    prestado: ['en prestamo', 'asignado', 'loaned'],\n  },\n  reservas: {\n    activa: ['activo', 'confirmada', 'confirmado', 'aprobada', 'programada', 'vigente', 'reservada'],\n    cancelada: ['cancelado', 'anulada', 'rechazada'],\n    finalizada: ['finalizado', 'completada', 'cumplida', 'terminada'],\n  },\n  prestamos: {\n    activo: ['activa', 'vigente', 'en curso', 'prestado', 'pendiente'],\n    devuelto: ['devuelta', 'entregado', 'finalizado', 'cerrado', 'completado'],\n  },\n  incidencias: {\n    abierta: ['abierto', 'nueva', 'pendiente', 'reportada', 'open'],\n    en_proceso: ['en curso', 'en progreso', 'asignada', 'atendiendo'],\n    resuelta: ['resuelto', 'solucionada', 'solucionado'],\n    cerrada: ['cerrado', 'finalizada', 'closed'],\n  },\n};\nconst PRIORIDADES = {\n  critica: ['critico', 'urgente', 'muy alta', 'emergencia'],\n  alta: ['alto', 'high'],\n  media: ['medio', 'normal', 'medium', 'moderada'],\n  baja: ['bajo', 'low', 'menor'],\n};\n\n// ---------------------------------------------------------------------\n//  Normalización\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst sinTildes = (valor) => texto(valor).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\nconst clave = (valor) => sinTildes(valor).replace(/[\\s.-]+/g, '_');\nconst codigo = (valor) => texto(valor).toUpperCase().replace(/\\s+/g, '-');\nconst entero = (valor) => (/^-?\\d+(\\.0+)?$/.test(texto(valor)) ? Number.parseInt(texto(valor), 10) : null);\nconst lista = (valor) => (Array.isArray(valor) ? valor : texto(valor).split(/[,;|]/)).map(sinTildes).filter(Boolean);\nconst minutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n\nfunction catalogo(valor, opciones) {\n  const buscado = sinTildes(valor).replace(/_/g, ' ');\n  for (const [canonico, sinonimos] of Object.entries(opciones)) {\n    if (canonico.replace(/_/g, ' ') === buscado || sinonimos.includes(buscado)) return canonico;\n  }\n  return null;\n}\n\n// Fechas: AAAA-MM-DD, AAAA/MM/DD o DD/MM/AAAA\nfunction fecha(valor) {\n  const t = texto(valor);\n  let partes = t.match(/^(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})/);\n  if (partes) partes = [partes[1], partes[2], partes[3]];\n  else {\n    const dma = t.match(/^(\\d{1,2})[-/](\\d{1,2})[-/](\\d{4})/);\n    if (!dma) return null;\n    partes = [dma[3], dma[2], dma[1]];\n  }\n  const iso = `${partes[0]}-${partes[1].padStart(2, '0')}-${partes[2].padStart(2, '0')}`;\n  const comprobacion = new Date(`${iso}T00:00:00Z`);\n  return !Number.isNaN(comprobacion.getTime()) && comprobacion.toISOString().slice(0, 10) === iso ? iso : null;\n}\n\n// Horas: 8:00, 08:00, 08:00:00, 8am, 2:30 p. m.\nfunction hora(valor) {\n  const t = sinTildes(valor).replace(/\\s+/g, '').replace(/\\./g, '');\n  const partes = t.match(/^(\\d{1,2})(?::(\\d{2}))?(?::\\d{2})?(am|pm)?$/);\n  if (!partes) return null;\n  let h = Number(partes[1]);\n  const m = Number(partes[2] ?? 0);\n  if (partes[3] === 'pm' && h < 12) h += 12;\n  if (partes[3] === 'am' && h === 12) h = 0;\n  if (h > 23 || m > 59) return null;\n  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;\n}\n\n// Fecha y hora: \"2026-10-20 08:00\", \"2026-10-20T08:00:00\", \"20/10/2026 8:00 am\"\nfunction fechaHora(valor) {\n  const [parteFecha, ...resto] = texto(valor).replace('T', ' ').split(/\\s+/);\n  const dia = fecha(parteFecha);\n  if (!dia) return null;\n  const h = resto.length ? hora(resto.join('').replace(/z$/i, '').replace(/[+-]\\d{2}:?\\d{2}$/, '')) : '00:00';\n  return h ? `${dia}T${h}` : null;\n}\n\nfunction normalizarFila(fila, alias) {\n  const porClave = {};\n  for (const [nombre, valor] of Object.entries(fila)) porClave[clave(nombre)] = valor;\n  const salida = {};\n  for (const [campo, opciones] of Object.entries(alias)) {\n    const columna = opciones.find((o) => porClave[o] !== undefined && texto(porClave[o]) !== '');\n    salida[campo] = columna === undefined ? '' : porClave[columna];\n  }\n  return salida;\n}\n\nconst respuestaError = (status, code, message) => [{ json: { ok: false, status, body: { ok: false, error: { code, message, details: [] } } } }];\n\n// ---------------------------------------------------------------------\n//  Entrada y datos existentes\n// ---------------------------------------------------------------------\nconst ctx = $input.first().json;\nconst cuerpo = $('POST /importar').first().json.body ?? {};\nconst entidad = clave(cuerpo.entidad);\nconst registros = cuerpo.registros;\nconst archivo = texto(cuerpo.archivo).slice(0, 200) || null;\n\nif (!ALIAS[entidad]) {\n  return respuestaError(400, 'ENTIDAD_INVALIDA', `Entidad no soportada: \"${texto(cuerpo.entidad)}\". Usa: ${Object.keys(ALIAS).join(', ')}.`);\n}\nif (!Array.isArray(registros) || registros.length === 0) return respuestaError(400, 'SIN_REGISTROS', 'El archivo no contiene registros.');\nif (registros.length > MAX_REGISTROS) {\n  return respuestaError(413, 'DEMASIADOS_REGISTROS', `Se admiten máximo ${MAX_REGISTROS} registros por importación.`);\n}\n\nconst espaciosPorCodigo = new Map(ctx.espacios.map((e) => [e.codigo, e]));\nconst recursosPorCodigo = new Map(ctx.recursos.map((r) => [r.codigo, r]));\nconst resolverEspacio = (valor) => espaciosPorCodigo.get(codigo(valor));\nconst resolverRecurso = (valor) => recursosPorCodigo.get(codigo(valor));\nconst enCatalogo = (valor, filas) => {\n  const buscado = sinTildes(valor);\n  return filas.find((f) => f.codigo === buscado.replace(/\\s+/g, '_') || sinTildes(f.nombre) === buscado)?.codigo ?? null;\n};\n\n// Lo aceptado en este mismo archivo (duplicados, cruces y préstamos)\nconst aceptados = new Map();\nconst ocupacion = new Map();\nconst ocupar = (espacioId, dia, inicio, fin, origen) => {\n  const llave = `${espacioId}|${dia}`;\n  if (!ocupacion.has(llave)) ocupacion.set(llave, []);\n  ocupacion.get(llave).push({ inicio, fin, origen });\n};\nctx.reservas_activas.forEach((r) => ocupar(r.espacio_id, r.fecha, minutos(r.hora_inicio), minutos(r.hora_fin), 'ya registrada'));\nconst prestamosActivos = new Map(ctx.prestamos_activos.map((p) => [p.recurso_id, 'ya registrado']));\n\n// ---------------------------------------------------------------------\n//  Validadores por entidad: llenan \"errores\" (rechazo) y \"avisos\"\n// ---------------------------------------------------------------------\nconst VALIDADORES = {\n  espacios(r, errores, avisos) {\n    const valor = {\n      codigo: codigo(r.codigo),\n      nombre: texto(r.nombre).slice(0, 120),\n      tipo: sinTildes(r.tipo).slice(0, 40),\n      capacidad: entero(r.capacidad),\n      ubicacion: texto(r.ubicacion).slice(0, 120) || null,\n      equipamiento: [...new Set(lista(r.equipamiento))],\n      estado: 'disponible',\n    };\n    if (!valor.codigo) errores.push('falta el código');\n    else if (valor.codigo.length > 40) errores.push('el código supera 40 caracteres');\n    if (!valor.nombre) errores.push('falta el nombre');\n    if (!valor.tipo) errores.push('falta el tipo');\n    if (valor.capacidad === null) errores.push(`capacidad inválida (\"${texto(r.capacidad)}\")`);\n    else if (valor.capacidad <= 0) errores.push(`la capacidad debe ser mayor que cero (${valor.capacidad})`);\n    if (texto(r.estado)) {\n      valor.estado = catalogo(r.estado, ESTADOS.espacios);\n      if (!valor.estado) errores.push(`estado desconocido (\"${texto(r.estado)}\")`);\n    } else {\n      avisos.push('sin estado: se registró como \"disponible\"');\n    }\n    if (espaciosPorCodigo.has(valor.codigo)) errores.push(`el código ${valor.codigo} ya existe en la base de datos`);\n    if (aceptados.has(valor.codigo)) errores.push(`código duplicado en el archivo (ya aparece en la fila ${aceptados.get(valor.codigo)})`);\n    return { identificador: valor.codigo || valor.nombre, valor };\n  },\n\n  recursos(r, errores, avisos) {\n    const espacio = texto(r.espacio) ? resolverEspacio(r.espacio) : null;\n    const valor = {\n      codigo: codigo(r.codigo),\n      nombre: texto(r.nombre).slice(0, 120),\n      tipo: sinTildes(r.tipo).slice(0, 40),\n      espacio_id: espacio?.id ?? null,\n      estado: 'disponible',\n    };\n    if (!valor.codigo) errores.push('falta el código');\n    else if (valor.codigo.length > 40) errores.push('el código supera 40 caracteres');\n    if (!valor.nombre) errores.push('falta el nombre');\n    if (!valor.tipo) errores.push('falta el tipo');\n    if (texto(r.espacio) && !espacio) errores.push(`el espacio \"${texto(r.espacio)}\" no existe (importa primero los espacios)`);\n    if (texto(r.estado)) {\n      const estado = catalogo(r.estado, ESTADOS.recursos);\n      if (!estado) errores.push(`estado desconocido (\"${texto(r.estado)}\")`);\n      else if (estado === 'prestado') {\n        errores.push('no se importa como \"prestado\": el préstamo activo va en el archivo de préstamos, que actualiza el estado del recurso');\n      } else valor.estado = estado;\n    } else {\n      avisos.push('sin estado: se registró como \"disponible\"');\n    }\n    if (recursosPorCodigo.has(valor.codigo)) errores.push(`el código ${valor.codigo} ya existe en la base de datos`);\n    if (aceptados.has(valor.codigo)) errores.push(`código duplicado en el archivo (ya aparece en la fila ${aceptados.get(valor.codigo)})`);\n    return { identificador: valor.codigo || valor.nombre, valor };\n  },\n\n  reservas(r, errores, avisos) {\n    const espacio = texto(r.espacio) ? resolverEspacio(r.espacio) : null;\n    const valor = {\n      espacio_id: espacio?.id ?? null,\n      solicitante: texto(r.solicitante).slice(0, 120),\n      motivo: texto(r.motivo).slice(0, 200) || null,\n      asistentes: entero(r.asistentes),\n      fecha: fecha(r.fecha),\n      hora_inicio: hora(r.hora_inicio),\n      hora_fin: hora(r.hora_fin),\n      estado: 'activa',\n    };\n    if (!texto(r.espacio)) errores.push('falta el espacio');\n    else if (!espacio) errores.push(`el espacio \"${texto(r.espacio)}\" no existe`);\n    if (!valor.solicitante) errores.push('falta el solicitante');\n    if (valor.asistentes === null || valor.asistentes <= 0) errores.push(`número de asistentes inválido (\"${texto(r.asistentes)}\")`);\n    if (!valor.fecha) errores.push(`fecha inválida (\"${texto(r.fecha)}\")`);\n    if (!valor.hora_inicio) errores.push(`hora de inicio inválida (\"${texto(r.hora_inicio)}\")`);\n    if (!valor.hora_fin) errores.push(`hora de fin inválida (\"${texto(r.hora_fin)}\")`);\n    if (valor.hora_inicio && valor.hora_fin && minutos(valor.hora_fin) <= minutos(valor.hora_inicio)) {\n      errores.push(`la hora de fin (${valor.hora_fin}) no es posterior a la de inicio (${valor.hora_inicio})`);\n    }\n    if (texto(r.estado)) {\n      valor.estado = catalogo(r.estado, ESTADOS.reservas);\n      if (!valor.estado) errores.push(`estado desconocido (\"${texto(r.estado)}\")`);\n    }\n    if (espacio && valor.asistentes > espacio.capacidad) {\n      errores.push(`RN-02: ${valor.asistentes} asistentes superan la capacidad de ${espacio.codigo} (${espacio.capacidad})`);\n    }\n    if (!errores.length && valor.estado === 'activa') {\n      const inicio = minutos(valor.hora_inicio);\n      const fin = minutos(valor.hora_fin);\n      const cruce = (ocupacion.get(`${valor.espacio_id}|${valor.fecha}`) ?? []).find((o) => inicio < o.fin && o.inicio < fin);\n      if (cruce) errores.push(`RN-03: se cruza con otra reserva activa de ${espacio.codigo} (${cruce.origen})`);\n    }\n    const identificador = `${espacio?.codigo ?? texto(r.espacio)} ${valor.fecha ?? texto(r.fecha)} ${valor.hora_inicio ?? ''}`.trim();\n    return { identificador, valor };\n  },\n\n  prestamos(r, errores, avisos) {\n    const recurso = texto(r.recurso) ? resolverRecurso(r.recurso) : null;\n    const valor = {\n      recurso_id: recurso?.id ?? null,\n      solicitante: texto(r.solicitante).slice(0, 120),\n      fecha_prestamo: fechaHora(r.fecha_prestamo),\n      fecha_limite: fechaHora(r.fecha_limite),\n      fecha_devolucion: texto(r.fecha_devolucion) ? fechaHora(r.fecha_devolucion) : null,\n      estado: null,\n      observaciones: texto(r.observaciones).slice(0, 1000) || null,\n    };\n    if (!texto(r.recurso)) errores.push('falta el recurso');\n    else if (!recurso) errores.push(`el recurso \"${texto(r.recurso)}\" no existe`);\n    if (!valor.solicitante) errores.push('falta el solicitante');\n    if (!valor.fecha_prestamo) errores.push(`fecha de préstamo inválida (\"${texto(r.fecha_prestamo)}\")`);\n    if (!valor.fecha_limite) errores.push(`fecha límite inválida (\"${texto(r.fecha_limite)}\")`);\n    if (texto(r.fecha_devolucion) && !valor.fecha_devolucion) errores.push(`fecha de devolución inválida (\"${texto(r.fecha_devolucion)}\")`);\n    if (valor.fecha_prestamo && valor.fecha_limite && valor.fecha_limite <= valor.fecha_prestamo) {\n      errores.push('la fecha límite no es posterior a la fecha del préstamo');\n    }\n    if (texto(r.estado)) {\n      valor.estado = catalogo(r.estado, ESTADOS.prestamos);\n      if (!valor.estado) errores.push(`estado desconocido (\"${texto(r.estado)}\")`);\n    } else {\n      valor.estado = valor.fecha_devolucion ? 'devuelto' : 'activo';\n      avisos.push(`sin estado: se tomó como \"${valor.estado}\" según la fecha de devolución`);\n    }\n    if (valor.estado === 'devuelto') {\n      if (!valor.fecha_devolucion) errores.push('un préstamo devuelto requiere la fecha de devolución');\n      else if (valor.fecha_prestamo && valor.fecha_devolucion < valor.fecha_prestamo) errores.push('la devolución es anterior al préstamo');\n    }\n    if (valor.estado === 'activo') {\n      if (valor.fecha_devolucion) errores.push('un préstamo activo no puede tener fecha de devolución');\n      if (recurso && recurso.estado !== 'disponible' && !prestamosActivos.has(recurso.id)) {\n        errores.push(`RN-05: el recurso ${recurso.codigo} está en \"${recurso.estado}\" y no puede tener un préstamo activo`);\n      }\n      if (recurso && prestamosActivos.has(recurso.id)) {\n        errores.push(`el recurso ${recurso.codigo} ya tiene un préstamo activo (${prestamosActivos.get(recurso.id)})`);\n      }\n    }\n    return { identificador: `${recurso?.codigo ?? texto(r.recurso)} → ${valor.solicitante || '?'}`, valor };\n  },\n\n  incidencias(r, errores, avisos) {\n    const espacio = texto(r.espacio) ? resolverEspacio(r.espacio) : null;\n    const recurso = texto(r.recurso) ? resolverRecurso(r.recurso) : null;\n    const valor = {\n      descripcion: texto(r.descripcion).slice(0, 2000),\n      reportado_por: texto(r.reportado_por).slice(0, 120),\n      espacio_id: espacio?.id ?? null,\n      recurso_id: recurso?.id ?? null,\n      categoria: null,\n      prioridad: null,\n      area_responsable: null,\n      triaje: 'pendiente',\n      estado: 'abierta',\n      creado_en: null,\n      resuelto_en: null,\n    };\n    if (valor.descripcion.length < 5) errores.push('falta la descripción');\n    if (!valor.reportado_por) {\n      valor.reportado_por = 'Dataset oficial';\n      avisos.push('sin reportante: se registró como \"Dataset oficial\"');\n    }\n    if (texto(r.espacio) && !espacio) errores.push(`el espacio \"${texto(r.espacio)}\" no existe`);\n    if (texto(r.recurso) && !recurso) errores.push(`el recurso \"${texto(r.recurso)}\" no existe`);\n    if (texto(r.categoria)) {\n      valor.categoria = enCatalogo(r.categoria, ctx.categorias);\n      if (!valor.categoria) avisos.push(`la categoría \"${texto(r.categoria)}\" no está en el catálogo`);\n    }\n    if (texto(r.prioridad)) {\n      valor.prioridad = catalogo(r.prioridad, PRIORIDADES);\n      if (!valor.prioridad) avisos.push(`la prioridad \"${texto(r.prioridad)}\" no es válida`);\n    }\n    if (texto(r.area_responsable)) {\n      valor.area_responsable = enCatalogo(r.area_responsable, ctx.areas);\n      if (!valor.area_responsable) avisos.push(`el área \"${texto(r.area_responsable)}\" no está en el catálogo`);\n    }\n    if (valor.categoria && valor.prioridad && valor.area_responsable) valor.triaje = 'manual';\n    else avisos.push('clasificación incompleta: queda pendiente de triaje (se puede clasificar con IA)');\n    if (texto(r.estado)) {\n      valor.estado = catalogo(r.estado, ESTADOS.incidencias);\n      if (!valor.estado) errores.push(`estado desconocido (\"${texto(r.estado)}\")`);\n    }\n    if (texto(r.fecha)) {\n      valor.creado_en = fechaHora(r.fecha);\n      if (!valor.creado_en) errores.push(`fecha inválida (\"${texto(r.fecha)}\")`);\n    }\n    if (['resuelta', 'cerrada'].includes(valor.estado)) valor.resuelto_en = valor.creado_en ?? ctx.ahora.slice(0, 16);\n    return { identificador: valor.descripcion.slice(0, 50), valor };\n  },\n};\n\n// Registra lo aceptado para detectar duplicados y cruces dentro del archivo\nconst REGISTRAR_ACEPTADO = {\n  espacios: (v, fila) => aceptados.set(v.codigo, fila),\n  recursos: (v, fila) => aceptados.set(v.codigo, fila),\n  reservas: (v, fila) => {\n    if (v.estado === 'activa') ocupar(v.espacio_id, v.fecha, minutos(v.hora_inicio), minutos(v.hora_fin), `fila ${fila}`);\n  },\n  prestamos: (v, fila) => {\n    if (v.estado === 'activo') prestamosActivos.set(v.recurso_id, `fila ${fila}`);\n  },\n  incidencias: () => {},\n};\n\n// ---------------------------------------------------------------------\n//  Validación registro por registro\n// ---------------------------------------------------------------------\nconst validos = [];\nconst rechazados = [];\nconst advertencias = [];\n\nregistros.forEach((original, indice) => {\n  const fila = Number.isInteger(original?.__fila) ? original.__fila : indice + 1;\n  if (!original || typeof original !== 'object' || Array.isArray(original)) {\n    rechazados.push({ fila, identificador: '', errores: ['el registro no tiene el formato de un objeto'] });\n    return;\n  }\n  const errores = [];\n  const avisos = [];\n  const { identificador, valor } = VALIDADORES[entidad](normalizarFila(original, ALIAS[entidad]), errores, avisos);\n  if (errores.length) {\n    rechazados.push({ fila, identificador, errores });\n    return;\n  }\n  validos.push(valor);\n  REGISTRAR_ACEPTADO[entidad](valor, fila);\n  if (avisos.length) advertencias.push({ fila, identificador, mensajes: avisos });\n});\n\nreturn [{ json: { ok: true, entidad, archivo, total: registros.length, validos, rechazados, advertencias } }];\n"
+      },
+      "id": "273177c5-cbfc-44b2-a697-09326e3d9fcd",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "¿Archivo válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8389123f-d929-4274-a110-8e6eb9f6ac85",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4bb0453-ee53-4f7f-a047-54ea7e6030dc",
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "name": "Según la entidad",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 5,
+        "output": "={{ ['espacios', 'recursos', 'reservas', 'prestamos', 'incidencias'].indexOf($json.entidad) }}"
+      },
+      "id": "06955d8d-15e0-410c-a9d2-f4deb80a4fe6",
+      "position": [
+        1040,
+        -60
+      ]
+    },
+    {
+      "name": "Insertar espacios",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH insertados AS (\n  INSERT INTO espacios (codigo, nombre, tipo, capacidad, ubicacion, equipamiento, estado, motivo_estado, origen_estado)\n  SELECT d.codigo, d.nombre, d.tipo, d.capacidad, d.ubicacion,\n         ARRAY(SELECT jsonb_array_elements_text(COALESCE(d.equipamiento, '[]'::jsonb))),\n         d.estado, 'Cargado desde el dataset', 'importacion'\n    FROM jsonb_to_recordset($1::jsonb)\n         AS d(codigo text, nombre text, tipo text, capacidad int, ubicacion text, equipamiento jsonb, estado text)\n  RETURNING id\n)\nINSERT INTO importaciones (entidad, archivo, total, insertados, rechazados, detalle)\nSELECT 'espacios', $2, $3, (SELECT count(*) FROM insertados), $4, $5::jsonb\nRETURNING id, entidad, archivo, total, insertados, rechazados, importado_en;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.validos), $json.archivo ?? null, $json.total, $json.rechazados.length, JSON.stringify({ rechazados: $json.rechazados, advertencias: $json.advertencias }) ] }}"
+        }
+      },
+      "id": "8f1dd859-5dae-4ab0-a3ad-01080a6285a3",
+      "position": [
+        1300,
+        -360
+      ]
+    },
+    {
+      "name": "Insertar recursos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH insertados AS (\n  INSERT INTO recursos (codigo, nombre, tipo, espacio_id, estado, motivo_estado, origen_estado)\n  SELECT d.codigo, d.nombre, d.tipo, d.espacio_id, d.estado, 'Cargado desde el dataset', 'importacion'\n    FROM jsonb_to_recordset($1::jsonb) AS d(codigo text, nombre text, tipo text, espacio_id int, estado text)\n  RETURNING id\n)\nINSERT INTO importaciones (entidad, archivo, total, insertados, rechazados, detalle)\nSELECT 'recursos', $2, $3, (SELECT count(*) FROM insertados), $4, $5::jsonb\nRETURNING id, entidad, archivo, total, insertados, rechazados, importado_en;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.validos), $json.archivo ?? null, $json.total, $json.rechazados.length, JSON.stringify({ rechazados: $json.rechazados, advertencias: $json.advertencias }) ] }}"
+        }
+      },
+      "id": "82f5f3ab-459c-42dc-a0ee-b99ab73e46d0",
+      "position": [
+        1300,
+        -200
+      ]
+    },
+    {
+      "name": "Insertar reservas",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH insertados AS (\n  INSERT INTO reservas (espacio_id, solicitante, motivo, asistentes, fecha, hora_inicio, hora_fin, estado, motivo_estado, origen_estado)\n  SELECT d.espacio_id, d.solicitante, d.motivo, d.asistentes, d.fecha, d.hora_inicio, d.hora_fin, d.estado,\n         'Cargada desde el dataset', 'importacion'\n    FROM jsonb_to_recordset($1::jsonb)\n         AS d(espacio_id int, solicitante text, motivo text, asistentes int, fecha date, hora_inicio time, hora_fin time, estado text)\n  RETURNING id\n)\nINSERT INTO importaciones (entidad, archivo, total, insertados, rechazados, detalle)\nSELECT 'reservas', $2, $3, (SELECT count(*) FROM insertados), $4, $5::jsonb\nRETURNING id, entidad, archivo, total, insertados, rechazados, importado_en;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.validos), $json.archivo ?? null, $json.total, $json.rechazados.length, JSON.stringify({ rechazados: $json.rechazados, advertencias: $json.advertencias }) ] }}"
+        }
+      },
+      "id": "91f4ff5a-1145-4987-ab9a-83d04bdaed55",
+      "position": [
+        1300,
+        -40
+      ]
+    },
+    {
+      "name": "Insertar préstamos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH insertados AS (\n  INSERT INTO prestamos (recurso_id, solicitante, fecha_prestamo, fecha_limite, fecha_devolucion, estado, observaciones, motivo_estado, origen_estado)\n  SELECT d.recurso_id, d.solicitante, d.fecha_prestamo, d.fecha_limite, d.fecha_devolucion, d.estado, d.observaciones,\n         'Cargado desde el dataset', 'importacion'\n    FROM jsonb_to_recordset($1::jsonb)\n         AS d(recurso_id int, solicitante text, fecha_prestamo timestamp, fecha_limite timestamp,\n              fecha_devolucion timestamp, estado text, observaciones text)\n  RETURNING recurso_id, estado\n),\nrecursos_prestados AS (\n  -- Integridad: un recurso con préstamo activo queda en estado \"prestado\"\n  UPDATE recursos\n     SET estado = 'prestado', motivo_estado = 'Préstamo activo cargado desde el dataset', origen_estado = 'importacion'\n   WHERE id IN (SELECT recurso_id FROM insertados WHERE estado = 'activo')\n  RETURNING id\n)\nINSERT INTO importaciones (entidad, archivo, total, insertados, rechazados, detalle)\nSELECT 'prestamos', $2, $3, (SELECT count(*) FROM insertados), $4, $5::jsonb\nRETURNING id, entidad, archivo, total, insertados, rechazados, importado_en;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.validos), $json.archivo ?? null, $json.total, $json.rechazados.length, JSON.stringify({ rechazados: $json.rechazados, advertencias: $json.advertencias }) ] }}"
+        }
+      },
+      "id": "0eafa7dd-e634-4717-a00b-93a61d193835",
+      "position": [
+        1300,
+        120
+      ]
+    },
+    {
+      "name": "Insertar incidencias",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH insertados AS (\n  INSERT INTO incidencias (descripcion, reportado_por, espacio_id, recurso_id, categoria, prioridad, area_responsable,\n                           triaje, estado, origen, motivo_estado, origen_estado, creado_en, resuelto_en)\n  SELECT d.descripcion, d.reportado_por, d.espacio_id, d.recurso_id, d.categoria, d.prioridad, d.area_responsable,\n         d.triaje, d.estado, 'importacion', 'Cargada desde el dataset', 'importacion',\n         COALESCE(d.creado_en, LOCALTIMESTAMP(0)), d.resuelto_en\n    FROM jsonb_to_recordset($1::jsonb)\n         AS d(descripcion text, reportado_por text, espacio_id int, recurso_id int, categoria text, prioridad text,\n              area_responsable text, triaje text, estado text, creado_en timestamp, resuelto_en timestamp)\n  RETURNING id, estado\n),\nregistro AS (\nINSERT INTO importaciones (entidad, archivo, total, insertados, rechazados, detalle)\nSELECT 'incidencias', $2, $3, (SELECT count(*) FROM insertados), $4, $5::jsonb\nRETURNING id, entidad, archivo, total, insertados, rechazados, importado_en\n)\nSELECT r.*,\n       (SELECT COALESCE(json_agg(id), '[]'::json) FROM insertados WHERE estado IN ('abierta', 'en_proceso')) AS ids_abiertas\n  FROM registro r;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.validos), $json.archivo ?? null, $json.total, $json.rechazados.length, JSON.stringify({ rechazados: $json.rechazados, advertencias: $json.advertencias }) ] }}"
+        }
+      },
+      "id": "3a615d0b-805d-40d6-ae33-84488cbb5059",
+      "position": [
+        1300,
+        280
+      ]
+    },
+    {
+      "name": "¿Hay incidencias abiertas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8aa80b1f-f4ac-4464-a7ec-7032f6cca897",
+              "leftValue": "={{ $json.ids_abiertas.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0c38247a-a6ed-4a88-ace5-fd511f38586b",
+      "position": [
+        1560,
+        280
+      ]
+    },
+    {
+      "name": "Incidencias a evaluar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Una incidencia abierta por ítem para recalcular sus bloqueos (RN-10)\nreturn $input.first().json.ids_abiertas.map((id) => ({ json: { incidencia_id: id } }));\n"
+      },
+      "id": "edc66ee4-33e1-46e5-a33d-cd37c721306d",
+      "position": [
+        1820,
+        200
+      ]
+    },
+    {
+      "name": "Aplicar bloqueos (RN-10)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusEfectos0001",
+          "mode": "list",
+          "cachedResultName": "Incidencias · Efectos en espacios y recursos"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "c2400c69-46bc-4ea5-ad9c-50a80156e405",
+      "position": [
+        2080,
+        200
+      ]
+    },
+    {
+      "name": "Resumen de la importación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Resumen de la importación (evidencia de carga, validación y persistencia)\n// =====================================================================\nconst validacion = $('Validar registros (RN-14)').first().json;\nconst NODOS_DE_INSERCION = ['Insertar espacios', 'Insertar recursos', 'Insertar reservas', 'Insertar préstamos', 'Insertar incidencias'];\n\nlet importacion = null;\nfor (const nodo of NODOS_DE_INSERCION) {\n  try {\n    importacion = $(nodo).first().json;\n    if (importacion) break;\n  } catch {\n    // esa rama del Switch no se ejecutó\n  }\n}\n\nconst cambios = $input.all().flatMap(({ json }) => json.cambios ?? []);\nconst ETIQUETAS = { espacios: 'Espacios', recursos: 'Recursos', reservas: 'Reservas', prestamos: 'Préstamos', incidencias: 'Incidencias' };\n\nconst partes = [\n  `${ETIQUETAS[validacion.entidad]}: ${importacion.insertados} de ${validacion.total} registro(s) cargado(s)`,\n  `${validacion.rechazados.length} rechazado(s)`,\n];\nif (validacion.advertencias.length) partes.push(`${validacion.advertencias.length} con advertencias`);\nif (cambios.length) partes.push(`${cambios.length} bloqueo(s) aplicado(s) por incidencias abiertas`);\n\nreturn [\n  {\n    json: {\n      status: 201,\n      body: {\n        ok: true,\n        data: { importacion, rechazados: validacion.rechazados, advertencias: validacion.advertencias, cambios },\n        message: `${partes.join(', ')}.`,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "c037e6a5-8e75-49e2-a66b-69350466b345",
+      "position": [
+        2340,
+        0
+      ]
+    },
+    {
+      "name": "Responder importación",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "e33ac626-3465-49ae-a0c6-153fb7e6c543",
+      "position": [
+        2600,
+        0
+      ]
+    },
+    {
+      "name": "Responder rechazo (archivo)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "cc988698-0124-415b-a5fd-4087bb96292e",
+      "position": [
+        1040,
+        160
+      ]
+    },
+    {
+      "name": "Nota · GET importaciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /importaciones\nHistorial de cargas con totales, rechazados y advertencias (evidencia de validación y persistencia).",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "5c6ff6f8-f479-43ef-a453-3ddb2fe42602",
+      "position": [
+        -460,
+        520
+      ]
+    },
+    {
+      "name": "GET /importaciones",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "9850ee2b-87b1-4cf7-aa84-fc12d27f1c7b",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "importaciones",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "44fdd74f-2c6e-4d71-a04d-743bb1e49b6a",
+      "position": [
+        0,
+        560
+      ]
+    },
+    {
+      "name": "Consultar importaciones",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(i ORDER BY i.id DESC), '[]'::json) AS data\n  FROM (SELECT id, entidad, archivo, total, insertados, rechazados, detalle, importado_en\n          FROM importaciones ORDER BY id DESC LIMIT 50) i;",
+        "options": {}
+      },
+      "id": "7694de50-7cc8-41ce-a630-c6d32bcb294a",
+      "position": [
+        260,
+        560
+      ]
+    },
+    {
+      "name": "Responder importaciones",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "4b158ab0-6d90-4caf-a101-18df97780e8d",
+      "position": [
+        520,
+        560
+      ]
+    },
+    {
+      "name": "Nota · Errores de base de datos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Errores de base de datos\nTodas las consultas envían sus errores aquí (salida roja). Las violaciones de restricciones (p. ej. dos reservas simultáneas) se traducen a mensajes claros con su código HTTP.",
+        "height": 200,
+        "width": 400,
+        "color": 3
+      },
+      "id": "638bb94b-d179-4b02-a50f-e08e620bae42",
+      "position": [
+        -460,
+        780
+      ]
+    },
+    {
+      "name": "Traducir error de base de datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Traduce los errores de PostgreSQL a respuestas claras.\n//  Las restricciones de la base de datos son la última barrera de\n//  integridad: si dos peticiones simultáneas se saltan una regla, la base\n//  de datos rechaza la segunda y aquí se explica el motivo al usuario.\n// =====================================================================\nconst RESTRICCIONES = {\n  reservas_sin_solapamiento: [409, 'CONFLICTO_HORARIO', 'El espacio ya tiene una reserva activa que se cruza con ese horario.'],\n  espacios_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un espacio con ese código.'],\n  recursos_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un recurso con ese código.'],\n  prestamos_un_activo_por_recurso: [409, 'RECURSO_YA_PRESTADO', 'El recurso ya tiene un préstamo activo.'],\n  recursos_espacio_id_fkey: [422, 'ESPACIO_INEXISTENTE', 'El espacio indicado no existe.'],\n  espacios_capacidad_positiva: [422, 'CAPACIDAD_INVALIDA', 'La capacidad debe ser mayor que cero.'],\n  reservas_rango_horario: [422, 'HORARIO_INVALIDO', 'La hora de fin debe ser posterior a la de inicio.'],\n  prestamos_limite_posterior: [422, 'FECHA_INVALIDA', 'La fecha límite debe ser posterior a la fecha del préstamo.'],\n  incidencias_clasificacion_completa: [422, 'CLASIFICACION_INCOMPLETA', 'La clasificación requiere categoría, prioridad y área.'],\n};\n\nconst fallo = $input.first().json;\nconst detalle = `${fallo.message ?? ''} ${fallo.error?.description ?? ''}`;\n\nconst restriccion = Object.keys(RESTRICCIONES).find((nombre) => detalle.includes(nombre));\nif (restriccion) {\n  const [status, code, message] = RESTRICCIONES[restriccion];\n  return [{ json: { status, body: { ok: false, error: { code, message, details: [{ regla: 'BD', mensaje: restriccion }] } } } }];\n}\n\nconst sinConexion = /Connection refused|ECONNREFUSED|Host not found|ENOTFOUND|timed out/i.test(detalle);\nreturn [\n  {\n    json: {\n      status: sinConexion ? 503 : 500,\n      body: {\n        ok: false,\n        error: {\n          code: sinConexion ? 'BD_NO_DISPONIBLE' : 'ERROR_BASE_DE_DATOS',\n          message: sinConexion\n            ? 'La base de datos no está disponible en este momento.'\n            : 'No fue posible completar la operación en la base de datos.',\n          details: [{ regla: 'BD', mensaje: String(fallo.message ?? '').slice(0, 300) }],\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "bbaa2e03-e40f-4953-affc-c8b4df8e2b72",
+      "position": [
+        0,
+        820
+      ]
+    },
+    {
+      "name": "Responder error de BD",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "dd3557a9-153f-49e0-a200-bcd38ae71073",
+      "position": [
+        260,
+        820
+      ]
+    }
+  ],
+  "connections": {
+    "POST /importar": {
+      "main": [
+        [
+          {
+            "node": "Datos existentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos existentes": {
+      "main": [
+        [
+          {
+            "node": "Validar registros (RN-14)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar registros (RN-14)": {
+      "main": [
+        [
+          {
+            "node": "¿Archivo válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Archivo válido?": {
+      "main": [
+        [
+          {
+            "node": "Según la entidad",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (archivo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Según la entidad": {
+      "main": [
+        [
+          {
+            "node": "Insertar espacios",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insertar recursos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insertar reservas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insertar préstamos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insertar incidencias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar espacios": {
+      "main": [
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar recursos": {
+      "main": [
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar reservas": {
+      "main": [
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar préstamos": {
+      "main": [
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar incidencias": {
+      "main": [
+        [
+          {
+            "node": "¿Hay incidencias abiertas?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay incidencias abiertas?": {
+      "main": [
+        [
+          {
+            "node": "Incidencias a evaluar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Incidencias a evaluar": {
+      "main": [
+        [
+          {
+            "node": "Aplicar bloqueos (RN-10)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar bloqueos (RN-10)": {
+      "main": [
+        [
+          {
+            "node": "Resumen de la importación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen de la importación": {
+      "main": [
+        [
+          {
+            "node": "Responder importación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /importaciones": {
+      "main": [
+        [
+          {
+            "node": "Consultar importaciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar importaciones": {
+      "main": [
+        [
+          {
+            "node": "Responder importaciones",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traducir error de base de datos": {
+      "main": [
+        [
+          {
+            "node": "Responder error de BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "datos"
+    },
+    {
+      "name": "api"
+    }
+  ]
+}

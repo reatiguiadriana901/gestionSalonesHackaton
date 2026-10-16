@@ -1,0 +1,1311 @@
+{
+  "id": "campusRecursos001",
+  "name": "Módulo 2 · Recursos y préstamos",
+  "nodes": [
+    {
+      "name": "Nota · GET recursos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /recursos\nInventario con estado, ubicación, préstamo activo (y si está vencido) e incidencias abiertas. Filtro: `?estado=`.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "de2c69fd-e22b-4ce2-abad-d61405f941ed",
+      "position": [
+        -460,
+        -40
+      ]
+    },
+    {
+      "name": "GET /recursos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "b6c040d2-71e8-4323-a20b-5309685e6e23",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "recursos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4a261fd7-a620-48db-a9e7-26a770b4341a",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Consultar recursos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(v ORDER BY v.codigo), '[]'::json) AS data FROM v_recursos v WHERE ($1 = '' OR v.estado = $1);",
+        "options": {
+          "queryReplacement": "={{ [ String($json.query.estado ?? '') ] }}"
+        }
+      },
+      "id": "41b861bf-ebfd-4aba-aa79-b230612c919b",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "Responder recursos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "e4841061-0210-480d-a681-4390f1b47642",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "Nota · POST recursos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### POST /recursos\nRegistra un recurso. Código único y ubicación existente (garantizados también por la base de datos).",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "4a6a9cfa-f343-4ea3-aef6-00f36dd7c9cb",
+      "position": [
+        -460,
+        220
+      ]
+    },
+    {
+      "name": "POST /recursos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "40d93383-4b03-422e-a4ac-26ae41654d51",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recursos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "abbde9be-71f3-44a8-afc8-9500d721d1f3",
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "name": "Validar recurso",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Registro de un recurso tecnológico nuevo: valida y normaliza\n// =====================================================================\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('POST /recursos').first().json.body ?? {};\nconst sinTildes = (valor) => valor.normalize('NFD').replace(/[̀-ͯ]/g, '');\n\nconst recurso = {\n  codigo: texto(cuerpo.codigo).toUpperCase().replace(/\\s+/g, '-'),\n  nombre: texto(cuerpo.nombre),\n  tipo: sinTildes(texto(cuerpo.tipo).toLowerCase()),\n  espacio_id: texto(cuerpo.espacio_id) === '' ? null : numero(cuerpo.espacio_id),\n};\n\nconst errores = [];\nif (!/^[A-Z0-9][A-Z0-9_.-]{0,39}$/.test(recurso.codigo)) {\n  errores.push('El código (placa o serial) es obligatorio: letras, números y guiones, máximo 40 caracteres.');\n}\nif (!recurso.nombre || recurso.nombre.length > 120) errores.push('El nombre es obligatorio (máximo 120 caracteres).');\nif (!recurso.tipo) errores.push('El tipo de recurso es obligatorio (portátil, proyector, tablet...).');\nif (recurso.espacio_id !== null && !esEnteroPositivo(recurso.espacio_id)) errores.push('La ubicación seleccionada no es válida.');\nif (errores.length) {\n  return respuestaError(422, 'DATOS_INVALIDOS', errores[0], errores.map((mensaje) => ({ regla: 'DATOS', mensaje })));\n}\n\nreturn [{ json: { ok: true, ...recurso } }];\n"
+      },
+      "id": "f217d3cb-8145-4838-ae62-052a07b0190a",
+      "position": [
+        260,
+        260
+      ]
+    },
+    {
+      "name": "¿Datos válidos? (recurso)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0dd5920a-5648-49af-af4b-2542ef5e0c4b",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5f34fdab-26f7-44a1-ad2b-6f7099c3ad35",
+      "position": [
+        520,
+        260
+      ]
+    },
+    {
+      "name": "Insertar recurso",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH nuevo AS (\n  INSERT INTO recursos (codigo, nombre, tipo, espacio_id, motivo_estado, origen_estado)\n  VALUES ($1, $2, $3, $4, 'Recurso registrado', 'usuario')\n  RETURNING *\n)\nSELECT row_to_json(nuevo) AS data, 'Recurso ' || nuevo.codigo || ' registrado' AS mensaje FROM nuevo;",
+        "options": {
+          "queryReplacement": "={{ [ $json.codigo, $json.nombre, $json.tipo, $json.espacio_id ?? null ] }}"
+        }
+      },
+      "id": "f28a567d-55b3-4e96-a129-849000ce1a71",
+      "position": [
+        780,
+        180
+      ]
+    },
+    {
+      "name": "Responder recurso creado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data, message: $json.mensaje } }}",
+        "options": {
+          "responseCode": "={{ 201 }}"
+        }
+      },
+      "id": "3526e2cb-668b-4c6e-a207-da444f101b21",
+      "position": [
+        1040,
+        180
+      ]
+    },
+    {
+      "name": "Responder rechazo (recurso)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "0d585089-1e50-48e9-afc6-ceb24a05f85b",
+      "position": [
+        780,
+        360
+      ]
+    },
+    {
+      "name": "Nota · PATCH recursos estado",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### PATCH /recursos/estado\n`{ id, estado, motivo }` — **RN-13**: \"prestado\" es automático, primero se devuelve, la baja es definitiva y no se habilita con incidencias bloqueantes abiertas.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "7bf3f943-2510-4392-a2d4-a42ca4d06f06",
+      "position": [
+        -460,
+        520
+      ]
+    },
+    {
+      "name": "PATCH /recursos/estado",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "e0a3dd11-8aac-4ed6-a101-9004421fbf79",
+      "parameters": {
+        "httpMethod": "PATCH",
+        "path": "recursos/estado",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4bfd2c40-0aaf-445d-ae9c-ab90f39b2946",
+      "position": [
+        0,
+        560
+      ]
+    },
+    {
+      "name": "Cargar recurso",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT row_to_json(r) FROM recursos r WHERE r.id::text = $1) AS recurso,\n  (SELECT row_to_json(x) FROM (SELECT id, solicitante, fecha_limite FROM prestamos\n                                WHERE recurso_id::text = $1 AND estado = 'activo') x) AS prestamo_activo,\n  (SELECT COALESCE(json_agg(json_build_object('id', i.id, 'prioridad', i.prioridad,\n                                              'resumen', COALESCE(i.ia_resumen, left(i.descripcion, 80)))), '[]'::json)\n     FROM incidencias i\n    WHERE i.recurso_id::text = $1 AND i.bloquea_recurso AND i.estado IN ('abierta', 'en_proceso')) AS incidencias_bloqueantes;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.id ?? '') ] }}"
+        }
+      },
+      "id": "1d89daef-2363-46c3-a279-05197eba3166",
+      "position": [
+        260,
+        560
+      ]
+    },
+    {
+      "name": "Validar cambio de estado (RN-13)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Cambio manual del estado de un recurso (RN-13)\n//  - \"prestado\" solo lo asigna el registro de un préstamo.\n//  - Un recurso con préstamo activo primero debe devolverse.\n//  - Un recurso dado de baja no vuelve a operar.\n//  - No se habilita un recurso con incidencias bloqueantes abiertas.\n// =====================================================================\nconst ESTADOS_MANUALES = ['disponible', 'mantenimiento', 'baja'];\nconst LARGO_MINIMO_MOTIVO = 5;\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('PATCH /recursos/estado').first().json.body ?? {};\nconst ctx = $input.first().json;\nconst recurso = ctx.recurso;\nconst estado = texto(cuerpo.estado).toLowerCase();\nconst motivo = texto(cuerpo.motivo);\n\nif (!recurso) return respuestaError(404, 'RECURSO_NO_ENCONTRADO', 'El recurso no existe.');\nif (estado === 'prestado') {\n  return respuestaError(422, 'ESTADO_AUTOMATICO', 'El estado \"prestado\" se asigna automáticamente al registrar un préstamo.');\n}\nif (!ESTADOS_MANUALES.includes(estado)) {\n  return respuestaError(422, 'ESTADO_INVALIDO', `Estado no válido. Usa uno de: ${ESTADOS_MANUALES.join(', ')}.`);\n}\nif (estado === recurso.estado) return respuestaError(422, 'SIN_CAMBIOS', `${recurso.nombre} ya está en estado \"${estado}\".`);\nif (motivo.length < LARGO_MINIMO_MOTIVO) {\n  return respuestaError(422, 'MOTIVO_REQUERIDO', 'Indica el motivo del cambio: queda registrado en el historial.');\n}\nif (ctx.prestamo_activo) {\n  return respuestaError(\n    409,\n    'PRESTAMO_ACTIVO',\n    `${recurso.nombre} está prestado a ${ctx.prestamo_activo.solicitante}: registra la devolución antes de cambiar su estado.`,\n  );\n}\nif (recurso.estado === 'baja') {\n  return respuestaError(409, 'RECURSO_DADO_DE_BAJA', `${recurso.nombre} fue dado de baja y no puede volver a operar.`);\n}\nif (estado === 'disponible' && ctx.incidencias_bloqueantes.length) {\n  const detalle = ctx.incidencias_bloqueantes.map((i) => ({\n    regla: 'RN-13',\n    mensaje: `Incidencia #${i.id} (${i.prioridad ?? 'sin prioridad'}): ${i.resumen}`,\n  }));\n  return respuestaError(\n    409,\n    'INCIDENCIAS_ABIERTAS',\n    `No se puede habilitar ${recurso.nombre}: tiene ${detalle.length} incidencia(s) bloqueante(s) abierta(s). Resuélvelas primero.`,\n    detalle,\n  );\n}\n\nreturn [{ json: { ok: true, id: recurso.id, estado, motivo } }];\n"
+      },
+      "id": "06ec4f01-bc4a-4d00-a1cc-9b1e80aa0331",
+      "position": [
+        520,
+        560
+      ]
+    },
+    {
+      "name": "¿Cambio permitido? (recurso)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0a5720bc-c66d-4805-ad8c-3308118e43c5",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8a46522c-c19a-43a4-a0f1-6c0b9a6bafb7",
+      "position": [
+        780,
+        560
+      ]
+    },
+    {
+      "name": "Actualizar estado del recurso",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE recursos SET estado = $2, motivo_estado = $3, origen_estado = 'usuario' WHERE id = $1;\n\nSELECT row_to_json(v) AS data, 'Estado de ' || v.nombre || ' actualizado a \"' || v.estado || '\"' AS mensaje\n  FROM v_recursos v WHERE v.id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id, $json.estado, $json.motivo ] }}"
+        }
+      },
+      "id": "b653f92a-d51a-4b3d-aab0-ab196f1d2358",
+      "position": [
+        1040,
+        480
+      ]
+    },
+    {
+      "name": "Responder estado del recurso",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data, message: $json.mensaje } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "a5a15258-8678-4285-a124-c74e914274af",
+      "position": [
+        1300,
+        480
+      ]
+    },
+    {
+      "name": "Responder rechazo (estado recurso)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "ccafe375-001c-4462-a973-796a17e91406",
+      "position": [
+        1040,
+        660
+      ]
+    },
+    {
+      "name": "Nota · GET préstamos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /prestamos\nFiltro: `?estado=activo|devuelto|vencido`. Trazabilidad completa en `GET /historial`.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "f55f8834-bf83-46ca-af7f-61a6d8120ab8",
+      "position": [
+        -460,
+        820
+      ]
+    },
+    {
+      "name": "GET /prestamos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "257535a7-bb18-408f-a02d-cb6a2c8033b5",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "prestamos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "601c9047-1ead-459f-afa7-9bf70184f265",
+      "position": [
+        0,
+        860
+      ]
+    },
+    {
+      "name": "Consultar préstamos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(v ORDER BY v.estado = 'devuelto', v.fecha_limite DESC), '[]'::json) AS data\n  FROM (SELECT * FROM v_prestamos\n         WHERE ($1 = '' OR estado = $1 OR ($1 = 'vencido' AND vencido))\n         ORDER BY id DESC\n         LIMIT 300) v;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.query.estado ?? '') ] }}"
+        }
+      },
+      "id": "d31b9a66-2d64-448a-a934-72038442ad1e",
+      "position": [
+        260,
+        860
+      ]
+    },
+    {
+      "name": "Responder préstamos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "84b67fb3-3544-4a2b-afd1-5072ef8eab81",
+      "position": [
+        520,
+        860
+      ]
+    },
+    {
+      "name": "Nota · POST préstamos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### POST /prestamos ★\n**RN-05** solo recursos disponibles · **RN-06** máximo 3 días · **RN-07** máximo 2 préstamos activos por persona y ninguno vencido.\nLas constantes están al inicio del nodo *Reglas de préstamo*.",
+        "height": 230,
+        "width": 400,
+        "color": 7
+      },
+      "id": "2a4a56ad-d122-40f5-a4f3-bad84a42c209",
+      "position": [
+        -460,
+        1080
+      ]
+    },
+    {
+      "name": "POST /prestamos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "616b96c8-cb8a-4e6a-acd1-6eeb11403a59",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prestamos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7c216612-15ca-4c63-ab8f-5743bb9455ea",
+      "position": [
+        0,
+        1120
+      ]
+    },
+    {
+      "name": "Contexto del préstamo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  to_char(LOCALTIMESTAMP, 'YYYY-MM-DD\"T\"HH24:MI') AS ahora,\n  (SELECT row_to_json(r) FROM recursos r WHERE r.id::text = $1) AS recurso,\n  (SELECT COALESCE(json_agg(json_build_object('id', p.id, 'recurso_codigo', rc.codigo,\n                                              'fecha_limite', to_char(p.fecha_limite, 'YYYY-MM-DD\"T\"HH24:MI'),\n                                              'vencido', p.fecha_limite < LOCALTIMESTAMP) ORDER BY p.fecha_limite), '[]'::json)\n     FROM prestamos p\n     JOIN recursos rc ON rc.id = p.recurso_id\n    WHERE p.estado = 'activo' AND lower(btrim(p.solicitante)) = lower(btrim($2))) AS prestamos_del_solicitante;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.recurso_id ?? ''), String($json.body.solicitante ?? '') ] }}"
+        }
+      },
+      "id": "35487f7f-636b-49c2-a222-7a25148773c5",
+      "position": [
+        260,
+        1120
+      ]
+    },
+    {
+      "name": "Reglas de préstamo (RN-05 a RN-07)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  REGLAS DE NEGOCIO · PRÉSTAMO DE RECURSOS TECNOLÓGICOS\n//  Para cambiar una regla, modifica estas constantes o la condición\n//  correspondiente más abajo (cada regla está marcada con su código).\n// =====================================================================\nconst MAX_DIAS_PRESTAMO = 3; // RN-06\nconst MAX_PRESTAMOS_ACTIVOS_POR_PERSONA = 2; // RN-07\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('POST /prestamos').first().json.body ?? {};\nconst ctx = $input.first().json;\n\n// 1. Datos de entrada --------------------------------------------------\nconst prestamo = {\n  recurso_id: numero(cuerpo.recurso_id),\n  solicitante: texto(cuerpo.solicitante),\n  // Acepta \"AAAA-MM-DDTHH:MM\" (input datetime-local) o con espacio\n  fecha_limite: texto(cuerpo.fecha_limite).replace(' ', 'T').slice(0, 16),\n};\n\nconst datosInvalidos = [];\nif (!esEnteroPositivo(prestamo.recurso_id)) datosInvalidos.push('Selecciona un recurso válido.');\nif (!prestamo.solicitante || prestamo.solicitante.length > 120) datosInvalidos.push('Indica quién solicita el préstamo.');\nif (!esFechaHora(prestamo.fecha_limite)) datosInvalidos.push('La fecha de devolución debe tener el formato AAAA-MM-DD HH:MM.');\nif (datosInvalidos.length) {\n  return respuestaError(400, 'DATOS_INVALIDOS', datosInvalidos[0], datosInvalidos.map((mensaje) => ({ regla: 'DATOS', mensaje })));\n}\n\nconst recurso = ctx.recurso;\nif (!recurso) return respuestaError(404, 'RECURSO_NO_ENCONTRADO', 'El recurso seleccionado no existe.');\n\n// 2. Reglas de negocio -------------------------------------------------\nconst incumplidas = [];\nconst regla = (cumple, codigo, mensaje) => {\n  if (!cumple) incumplidas.push({ regla: codigo, mensaje });\n};\n\n// RN-05 Solo se prestan recursos disponibles (no prestados, en mantenimiento ni de baja)\nregla(\n  recurso.estado === 'disponible',\n  'RN-05',\n  `${recurso.nombre} (${recurso.codigo}) no está disponible: estado \"${recurso.estado}\"${recurso.motivo_estado ? ` (${recurso.motivo_estado})` : ''}.`,\n);\n\n// RN-06 Plazo: devolución en el futuro y como máximo MAX_DIAS_PRESTAMO días\nconst limiteMaximo = sumarDias(ctx.ahora, MAX_DIAS_PRESTAMO);\nregla(prestamo.fecha_limite > ctx.ahora, 'RN-06', 'La fecha de devolución debe ser posterior al momento actual.');\nregla(\n  prestamo.fecha_limite <= limiteMaximo,\n  'RN-06',\n  `Un préstamo dura máximo ${MAX_DIAS_PRESTAMO} días: la devolución debe ser a más tardar el ${limiteMaximo.replace('T', ' ')}.`,\n);\n\n// RN-07 Cupo: sin préstamos vencidos y con un máximo de préstamos activos\nconst activos = ctx.prestamos_del_solicitante;\nconst vencidos = activos.filter((p) => p.vencido);\nregla(\n  vencidos.length === 0,\n  'RN-07',\n  `${prestamo.solicitante} tiene préstamos vencidos sin devolver (${vencidos.map((p) => p.recurso_codigo).join(', ')}).`,\n);\nregla(\n  activos.length < MAX_PRESTAMOS_ACTIVOS_POR_PERSONA,\n  'RN-07',\n  `${prestamo.solicitante} ya tiene ${activos.length} préstamo(s) activo(s); el máximo es ${MAX_PRESTAMOS_ACTIVOS_POR_PERSONA}.`,\n);\n\nif (incumplidas.length) {\n  return respuestaError(422, 'REGLA_DE_NEGOCIO', incumplidas[0].mensaje, incumplidas);\n}\n\nreturn [{ json: { ok: true, ...prestamo } }];\n"
+      },
+      "id": "468c1475-14bb-4958-a9de-3ed5911d91aa",
+      "position": [
+        520,
+        1120
+      ]
+    },
+    {
+      "name": "¿Cumple las reglas? (préstamo)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "71c0145d-a16a-4e61-a3ba-7475306980e8",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "457c21ea-0182-4b9b-a87a-2c299c90cbc7",
+      "position": [
+        780,
+        1120
+      ]
+    },
+    {
+      "name": "Registrar préstamo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO prestamos (recurso_id, solicitante, fecha_limite, motivo_estado, origen_estado)\nVALUES ($1, $2, $3::timestamp, 'Préstamo registrado', 'usuario');\n\nUPDATE recursos SET estado = 'prestado', motivo_estado = 'Prestado a ' || $2, origen_estado = 'usuario' WHERE id = $1;\n\nSELECT row_to_json(v) AS data,\n       'Préstamo registrado: ' || v.recurso_nombre || ' para ' || v.solicitante\n         || ' hasta el ' || to_char(v.fecha_limite, 'DD/MM/YYYY HH24:MI') AS mensaje\n  FROM v_prestamos v\n WHERE v.recurso_id = $1 AND v.estado = 'activo';",
+        "options": {
+          "queryReplacement": "={{ [ $json.recurso_id, $json.solicitante, $json.fecha_limite ] }}"
+        }
+      },
+      "id": "09c73c08-9e71-41b4-adfd-a83c3414be14",
+      "position": [
+        1040,
+        1040
+      ]
+    },
+    {
+      "name": "Responder préstamo creado",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data, message: $json.mensaje } }}",
+        "options": {
+          "responseCode": "={{ 201 }}"
+        }
+      },
+      "id": "fd4f750a-9727-4389-a731-b18dcb8cccaf",
+      "position": [
+        1300,
+        1040
+      ]
+    },
+    {
+      "name": "Responder rechazo (préstamo)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "00d5bf5e-0901-436d-ad7d-e152c9650407",
+      "position": [
+        1040,
+        1220
+      ]
+    },
+    {
+      "name": "Nota · PATCH devolución",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### PATCH /prestamos/devolucion ★ IA\n`{ id, con_danio, observaciones }` — **RN-08**: con daño, el recurso queda en mantenimiento y se crea una incidencia que la IA clasifica automáticamente (sub-workflow de triaje).",
+        "height": 230,
+        "width": 400,
+        "color": 7
+      },
+      "id": "ed8a39b0-4660-44c0-ab8e-3a30559af242",
+      "position": [
+        -460,
+        1380
+      ]
+    },
+    {
+      "name": "PATCH /prestamos/devolucion",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "e0e43890-3f28-430e-abdf-fc4cff638c3f",
+      "parameters": {
+        "httpMethod": "PATCH",
+        "path": "prestamos/devolucion",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "28899894-beef-488d-a625-156503826c2b",
+      "position": [
+        0,
+        1420
+      ]
+    },
+    {
+      "name": "Cargar préstamo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT row_to_json(v) FROM v_prestamos v WHERE v.id::text = $1) AS prestamo;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.id ?? '') ] }}"
+        }
+      },
+      "id": "dd245923-293c-4b57-af74-940ea9a0ba18",
+      "position": [
+        260,
+        1420
+      ]
+    },
+    {
+      "name": "Validar devolución (RN-08)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  DEVOLUCIÓN DE UN PRÉSTAMO (RN-08)\n//  Si se reporta daño, el recurso queda en mantenimiento y se crea una\n//  incidencia que la IA clasifica en el siguiente paso.\n// =====================================================================\nconst LARGO_MINIMO_DESCRIPCION_DANIO = 10;\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('PATCH /prestamos/devolucion').first().json.body ?? {};\nconst prestamo = $input.first().json.prestamo;\nconst conDanio = cuerpo.con_danio === true || texto(cuerpo.con_danio).toLowerCase() === 'true';\nconst observaciones = texto(cuerpo.observaciones).slice(0, 1000);\n\nif (!prestamo) return respuestaError(404, 'PRESTAMO_NO_ENCONTRADO', 'El préstamo no existe.');\nif (prestamo.estado !== 'activo') {\n  return respuestaError(409, 'PRESTAMO_YA_DEVUELTO', `El préstamo #${prestamo.id} ya fue devuelto (${prestamo.fecha_devolucion}).`);\n}\nif (conDanio && observaciones.length < LARGO_MINIMO_DESCRIPCION_DANIO) {\n  return respuestaError(\n    422,\n    'DESCRIPCION_REQUERIDA',\n    `Describe el daño (mínimo ${LARGO_MINIMO_DESCRIPCION_DANIO} caracteres): la IA lo usa para clasificar la incidencia.`,\n  );\n}\n\nreturn [{ json: { ok: true, id: prestamo.id, con_danio: conDanio, observaciones } }];\n"
+      },
+      "id": "458f6a6f-3e2e-470d-a89a-25b7bb2a3338",
+      "position": [
+        520,
+        1420
+      ]
+    },
+    {
+      "name": "¿Devolución válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "54046548-f2bb-4ca6-a098-f5fb7f46975f",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "65dc67cb-ff21-4164-a99c-322463398d01",
+      "position": [
+        780,
+        1420
+      ]
+    },
+    {
+      "name": "Registrar devolución",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE prestamos\n   SET estado = 'devuelto', fecha_devolucion = GREATEST(LOCALTIMESTAMP(0), fecha_prestamo),\n       con_danio = $2, observaciones = NULLIF($3, ''), origen_estado = 'usuario',\n       motivo_estado = CASE WHEN $2 THEN 'Devuelto con daño' ELSE 'Devuelto en buen estado' END\n WHERE id = $1;\n\n-- RN-08: con daño (o con incidencias bloqueantes abiertas) el recurso queda en mantenimiento\nUPDATE recursos r\n   SET estado = CASE WHEN b.bloqueado THEN 'mantenimiento' ELSE 'disponible' END,\n       origen_estado = CASE WHEN $2 THEN 'devolucion' WHEN b.bloqueado THEN 'incidencia' ELSE 'usuario' END,\n       motivo_estado = CASE WHEN $2 THEN 'Daño reportado en la devolución: ' || $3\n                            WHEN b.bloqueado THEN 'Devuelto, pero tiene incidencias bloqueantes abiertas'\n                            ELSE 'Devuelto por ' || b.solicitante END\n  FROM (SELECT p.recurso_id, p.solicitante,\n               $2 OR EXISTS (SELECT 1 FROM incidencias i\n                              WHERE i.recurso_id = p.recurso_id AND i.bloquea_recurso\n                                AND i.estado IN ('abierta', 'en_proceso')) AS bloqueado\n          FROM prestamos p\n         WHERE p.id = $1) b\n WHERE r.id = b.recurso_id;\n\n-- RN-08: el daño genera una incidencia que mantiene bloqueado el recurso hasta resolverse\nWITH nueva AS (\n  INSERT INTO incidencias (descripcion, reportado_por, recurso_id, bloquea_recurso, origen, motivo_estado, origen_estado)\n  SELECT 'Daño reportado al devolver ' || rc.nombre || ' (' || rc.codigo || '): ' || $3,\n         p.solicitante, rc.id, true, 'devolucion', 'Generada por una devolución con daño', 'devolucion'\n    FROM prestamos p\n    JOIN recursos rc ON rc.id = p.recurso_id\n   WHERE p.id = $1 AND $2\n  RETURNING id\n)\nSELECT (SELECT row_to_json(v) FROM v_prestamos v WHERE v.id = $1) AS prestamo,\n       (SELECT row_to_json(x) FROM (SELECT r.id, r.codigo, r.nombre, r.estado, r.motivo_estado\n                                      FROM recursos r JOIN prestamos p ON p.recurso_id = r.id\n                                     WHERE p.id = $1) x) AS recurso,\n       (SELECT id FROM nueva) AS incidencia_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id, $json.con_danio, $json.observaciones ] }}"
+        }
+      },
+      "id": "1d6744f3-81df-40e5-abeb-3b66f0ca52ca",
+      "position": [
+        1040,
+        1340
+      ]
+    },
+    {
+      "name": "¿Se reportó daño?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1bbfd692-1bf5-4b34-a09a-f65de524b90e",
+              "leftValue": "={{ $json.incidencia_id !== null }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3355d63e-f471-4784-a83a-77f37ab3b608",
+      "position": [
+        1300,
+        1340
+      ]
+    },
+    {
+      "name": "Clasificar el daño con IA",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusTriajeIA001",
+          "mode": "list",
+          "cachedResultName": "IA · Triaje de incidencias"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "360d5711-67fb-4239-a709-50c237ae5158",
+      "position": [
+        1560,
+        1260
+      ]
+    },
+    {
+      "name": "Armar respuesta de la devolución",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Respuesta de la devolución (incluye el triaje de la incidencia de daño)\n// =====================================================================\n// Resume en una frase el resultado del triaje y sus efectos en otros módulos\nconst describirTriaje = (resultado) => {\n  if (!resultado.clasificada) return `quedó pendiente de triaje manual (${resultado.error})`;\n  const incidencia = resultado.incidencia;\n  const quien = resultado.origen === 'manual' ? 'clasificada manualmente' : 'clasificada por la IA';\n  const partes = [\n    `${quien} como ${incidencia.categoria_nombre}, prioridad ${incidencia.prioridad}, asignada a ${incidencia.area_nombre}`,\n  ];\n  const efectos = resultado.efectos ?? {};\n  partes.push(...(efectos.cambios ?? []));\n  if (efectos.reservas_afectadas?.length) {\n    partes.push(`${efectos.reservas_afectadas.length} reserva(s) futura(s) afectada(s): conviene reasignarlas`);\n  }\n  return partes.join('. ');\n};\nconst devolucion = $('Registrar devolución').first().json;\nconst { prestamo, recurso, incidencia_id: incidenciaId } = devolucion;\n\nlet triaje = null;\nif (incidenciaId) {\n  const resultado = $input.first().json;\n  triaje =\n    resultado.encontrada === undefined\n      ? { clasificada: false, error: resultado.error ?? 'el triaje no se pudo ejecutar', incidencia: null }\n      : resultado;\n}\n\nconst partes = [\n  `Devolución registrada: ${prestamo.recurso_nombre} quedó ${recurso.estado === 'disponible' ? 'disponible' : `en ${recurso.estado}`}.`,\n];\nif (incidenciaId) partes.push(`Se creó la incidencia #${incidenciaId}: ${describirTriaje(triaje)}.`);\n\nreturn [\n  {\n    json: {\n      status: 200,\n      body: { ok: true, data: { prestamo, recurso, incidencia_id: incidenciaId, triaje }, message: partes.join(' ') },\n    },\n  },\n];\n"
+      },
+      "id": "379f6efa-cc13-4da2-ae2f-4ecfc6953eb3",
+      "position": [
+        1820,
+        1340
+      ]
+    },
+    {
+      "name": "Responder devolución",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "e997e6e3-2fb2-43d2-a7ba-354caee99285",
+      "position": [
+        2080,
+        1340
+      ]
+    },
+    {
+      "name": "Responder rechazo (devolución)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "73677d7c-9dd0-4089-a320-ef594dcecef5",
+      "position": [
+        1040,
+        1520
+      ]
+    },
+    {
+      "name": "Nota · Errores de base de datos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Errores de base de datos\nTodas las consultas envían sus errores aquí (salida roja). Las violaciones de restricciones (p. ej. dos reservas simultáneas) se traducen a mensajes claros con su código HTTP.",
+        "height": 200,
+        "width": 400,
+        "color": 3
+      },
+      "id": "5409a6ab-0de0-4c20-acbb-360aa4ce47d3",
+      "position": [
+        -460,
+        1700
+      ]
+    },
+    {
+      "name": "Traducir error de base de datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Traduce los errores de PostgreSQL a respuestas claras.\n//  Las restricciones de la base de datos son la última barrera de\n//  integridad: si dos peticiones simultáneas se saltan una regla, la base\n//  de datos rechaza la segunda y aquí se explica el motivo al usuario.\n// =====================================================================\nconst RESTRICCIONES = {\n  reservas_sin_solapamiento: [409, 'CONFLICTO_HORARIO', 'El espacio ya tiene una reserva activa que se cruza con ese horario.'],\n  espacios_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un espacio con ese código.'],\n  recursos_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un recurso con ese código.'],\n  prestamos_un_activo_por_recurso: [409, 'RECURSO_YA_PRESTADO', 'El recurso ya tiene un préstamo activo.'],\n  recursos_espacio_id_fkey: [422, 'ESPACIO_INEXISTENTE', 'El espacio indicado no existe.'],\n  espacios_capacidad_positiva: [422, 'CAPACIDAD_INVALIDA', 'La capacidad debe ser mayor que cero.'],\n  reservas_rango_horario: [422, 'HORARIO_INVALIDO', 'La hora de fin debe ser posterior a la de inicio.'],\n  prestamos_limite_posterior: [422, 'FECHA_INVALIDA', 'La fecha límite debe ser posterior a la fecha del préstamo.'],\n  incidencias_clasificacion_completa: [422, 'CLASIFICACION_INCOMPLETA', 'La clasificación requiere categoría, prioridad y área.'],\n};\n\nconst fallo = $input.first().json;\nconst detalle = `${fallo.message ?? ''} ${fallo.error?.description ?? ''}`;\n\nconst restriccion = Object.keys(RESTRICCIONES).find((nombre) => detalle.includes(nombre));\nif (restriccion) {\n  const [status, code, message] = RESTRICCIONES[restriccion];\n  return [{ json: { status, body: { ok: false, error: { code, message, details: [{ regla: 'BD', mensaje: restriccion }] } } } }];\n}\n\nconst sinConexion = /Connection refused|ECONNREFUSED|Host not found|ENOTFOUND|timed out/i.test(detalle);\nreturn [\n  {\n    json: {\n      status: sinConexion ? 503 : 500,\n      body: {\n        ok: false,\n        error: {\n          code: sinConexion ? 'BD_NO_DISPONIBLE' : 'ERROR_BASE_DE_DATOS',\n          message: sinConexion\n            ? 'La base de datos no está disponible en este momento.'\n            : 'No fue posible completar la operación en la base de datos.',\n          details: [{ regla: 'BD', mensaje: String(fallo.message ?? '').slice(0, 300) }],\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "256ae4f7-4825-4994-a780-35c9b3c58d7d",
+      "position": [
+        0,
+        1740
+      ]
+    },
+    {
+      "name": "Responder error de BD",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "3689712a-b18b-49a8-ac1d-ea04bcd11dfc",
+      "position": [
+        260,
+        1740
+      ]
+    }
+  ],
+  "connections": {
+    "GET /recursos": {
+      "main": [
+        [
+          {
+            "node": "Consultar recursos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar recursos": {
+      "main": [
+        [
+          {
+            "node": "Responder recursos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /recursos": {
+      "main": [
+        [
+          {
+            "node": "Validar recurso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar recurso": {
+      "main": [
+        [
+          {
+            "node": "¿Datos válidos? (recurso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Datos válidos? (recurso)": {
+      "main": [
+        [
+          {
+            "node": "Insertar recurso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (recurso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar recurso": {
+      "main": [
+        [
+          {
+            "node": "Responder recurso creado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH /recursos/estado": {
+      "main": [
+        [
+          {
+            "node": "Cargar recurso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar recurso": {
+      "main": [
+        [
+          {
+            "node": "Validar cambio de estado (RN-13)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar cambio de estado (RN-13)": {
+      "main": [
+        [
+          {
+            "node": "¿Cambio permitido? (recurso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Cambio permitido? (recurso)": {
+      "main": [
+        [
+          {
+            "node": "Actualizar estado del recurso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (estado recurso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar estado del recurso": {
+      "main": [
+        [
+          {
+            "node": "Responder estado del recurso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /prestamos": {
+      "main": [
+        [
+          {
+            "node": "Consultar préstamos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar préstamos": {
+      "main": [
+        [
+          {
+            "node": "Responder préstamos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /prestamos": {
+      "main": [
+        [
+          {
+            "node": "Contexto del préstamo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contexto del préstamo": {
+      "main": [
+        [
+          {
+            "node": "Reglas de préstamo (RN-05 a RN-07)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reglas de préstamo (RN-05 a RN-07)": {
+      "main": [
+        [
+          {
+            "node": "¿Cumple las reglas? (préstamo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Cumple las reglas? (préstamo)": {
+      "main": [
+        [
+          {
+            "node": "Registrar préstamo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (préstamo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar préstamo": {
+      "main": [
+        [
+          {
+            "node": "Responder préstamo creado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH /prestamos/devolucion": {
+      "main": [
+        [
+          {
+            "node": "Cargar préstamo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar préstamo": {
+      "main": [
+        [
+          {
+            "node": "Validar devolución (RN-08)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar devolución (RN-08)": {
+      "main": [
+        [
+          {
+            "node": "¿Devolución válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Devolución válida?": {
+      "main": [
+        [
+          {
+            "node": "Registrar devolución",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (devolución)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar devolución": {
+      "main": [
+        [
+          {
+            "node": "¿Se reportó daño?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Se reportó daño?": {
+      "main": [
+        [
+          {
+            "node": "Clasificar el daño con IA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Armar respuesta de la devolución",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clasificar el daño con IA": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta de la devolución",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta de la devolución": {
+      "main": [
+        [
+          {
+            "node": "Responder devolución",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traducir error de base de datos": {
+      "main": [
+        [
+          {
+            "node": "Responder error de BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "api"
+    },
+    {
+      "name": "modulo-2"
+    }
+  ]
+}

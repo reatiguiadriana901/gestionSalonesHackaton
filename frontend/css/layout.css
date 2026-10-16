@@ -1,0 +1,252 @@
+/* =====================================================================
+   Estructura: barra lateral, área de contenido y encabezado de vista
+   ===================================================================== */
+.app {
+  display: grid;
+  grid-template-columns: var(--ancho-lateral) minmax(0, 1fr);
+  min-height: 100vh;
+  /* La columna oscura ocupa toda la altura aunque la página sea larga */
+  background: linear-gradient(90deg, var(--color-lateral) var(--ancho-lateral), transparent var(--ancho-lateral));
+}
+
+/* ---------- Barra lateral ---------- */
+.barra-lateral {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-5);
+  height: 100vh;
+  padding: var(--esp-5) var(--esp-4);
+  background: var(--color-lateral);
+  color: var(--color-lateral-texto);
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: var(--esp-3);
+  padding: 0 var(--esp-2);
+}
+
+.marca__logo {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radio);
+  background: var(--color-primario);
+}
+
+.marca__logo svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.marca__texto {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.marca__texto strong {
+  color: #fff;
+  font-size: var(--texto-lg);
+}
+
+.marca__texto small {
+  font-size: var(--texto-xs);
+  color: var(--color-lateral-texto);
+}
+
+.navegacion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-1);
+}
+
+.navegacion__enlace {
+  display: flex;
+  align-items: center;
+  gap: var(--esp-3);
+  padding: 0.6rem var(--esp-3);
+  border-radius: var(--radio);
+  color: inherit;
+  text-decoration: none;
+  font-weight: 500;
+  transition: background var(--transicion), color var(--transicion);
+}
+
+.navegacion__enlace svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.navegacion__enlace:hover {
+  background: var(--color-lateral-activo);
+  color: #fff;
+}
+
+.navegacion__enlace[aria-current='page'] {
+  background: var(--color-primario);
+  color: #fff;
+}
+
+/* Estado de la base de datos y de la IA (abajo de la barra) */
+.estado-sistema {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-2);
+  padding: var(--esp-3);
+  border: 1px solid var(--color-lateral-activo);
+  border-radius: var(--radio);
+  font-size: var(--texto-xs);
+}
+
+.estado-sistema__fila {
+  display: flex;
+  align-items: center;
+  gap: var(--esp-2);
+}
+
+.estado-sistema__punto {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-texto-tenue);
+}
+
+.estado-sistema__punto--ok {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgb(34 197 94 / 20%);
+}
+
+.estado-sistema__punto--error {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgb(239 68 68 / 20%);
+}
+
+.estado-sistema__punto--aviso {
+  background: #f59e0b;
+}
+
+/* ---------- Contenido ---------- */
+.contenido {
+  min-width: 0;
+  padding: var(--esp-5) var(--esp-6) var(--esp-6);
+  outline: none;
+}
+
+.vista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-5);
+  max-width: var(--ancho-contenido);
+  margin: 0 auto;
+}
+
+.vista__encabezado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--esp-3);
+}
+
+.vista__titulo p {
+  margin-top: var(--esp-1);
+  color: var(--color-texto-suave);
+}
+
+.vista__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--esp-2);
+}
+
+/* Rejillas reutilizables */
+.rejilla {
+  display: grid;
+  gap: var(--esp-4);
+}
+
+.rejilla--kpi {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.rejilla--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rejilla--lateral {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+/* ---------- Pantallas pequeñas ---------- */
+@media (max-width: 1280px) {
+  .rejilla--kpi {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .rejilla--2,
+  .rejilla--lateral {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    background: none;
+  }
+
+  .rejilla--kpi {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .barra-lateral {
+    position: sticky;
+    z-index: 20;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--esp-3);
+    padding: var(--esp-3) var(--esp-4);
+  }
+
+  .marca__texto small,
+  .estado-sistema {
+    display: none;
+  }
+
+  .navegacion {
+    flex: 1 1 100%;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .navegacion__enlace {
+    flex: none;
+    font-size: var(--texto-sm);
+  }
+
+  .contenido {
+    padding: var(--esp-4);
+  }
+}

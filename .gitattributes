@@ -1,0 +1,7 @@
+# Finales de línea LF en todo el repositorio: los scripts de los contenedores
+# Linux fallan si se guardan con CRLF (Windows).
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

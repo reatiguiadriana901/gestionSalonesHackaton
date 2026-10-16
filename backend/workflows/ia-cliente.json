@@ -1,0 +1,202 @@
+{
+  "id": "campusClienteIA01",
+  "name": "IA · Cliente del modelo (proveedor configurable)",
+  "nodes": [
+    {
+      "name": "Nota · Cliente IA",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Cliente de IA (único punto que llama al modelo)\n**Entrada:** `{ tarea, sistema, mensaje, esquema, max_tokens }`\n**Salida:** `{ ok, datos, proveedor, modelo }` o `{ ok: false, error, detalle }`\n\nEl proveedor se elige en el `.env` (`AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL`). La API key la agrega la credencial **IA · API key del proveedor**, nunca aparece en el código ni en las ejecuciones.",
+        "height": 220,
+        "width": 760,
+        "color": 4
+      },
+      "id": "cb78c328-7def-4a00-aef3-4f7f9ac3c330",
+      "position": [
+        -60,
+        -300
+      ]
+    },
+    {
+      "name": "Entrada",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "4e58b034-aab5-4f91-a8ac-b698471f08a7",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Construir petición",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  CLIENTE DE IA (único punto del sistema que habla con el modelo)\n//\n//  Entrada: { tarea, sistema, mensaje, esquema, max_tokens? }\n//  El proveedor se elige en el .env, sin tocar este workflow:\n//    AI_PROVIDER=anthropic -> API de Mensajes de Claude\n//    AI_PROVIDER=openai    -> cualquier API compatible con OpenAI\n//                             (Ollama, LM Studio, vLLM, Groq...)\n//  La API key no pasa por aquí: la agrega la credencial del nodo HTTP.\n// =====================================================================\nconst entrada = $input.first().json;\nconst proveedor = String($env.AI_PROVIDER || 'anthropic').trim().toLowerCase();\nconst sinConfigurar = (motivo) => [{ json: { proveedor, modelo: $env.AI_MODEL || null, errorConfig: motivo } }];\n\nif (!entrada.sistema || !entrada.mensaje || !entrada.esquema) {\n  return sinConfigurar('La petición a la IA está incompleta (se requieren sistema, mensaje y esquema).');\n}\n\nif (proveedor === 'anthropic') {\n  if (!$env.AI_API_KEY) return sinConfigurar('Falta AI_API_KEY en el archivo .env del backend.');\n  const base = String($env.AI_BASE_URL || 'https://api.anthropic.com').replace(/\\/+$/, '');\n  const modelo = $env.AI_MODEL || 'claude-opus-5-5';\n  const esfuerzo = String($env.AI_EFFORT ?? 'low').trim();\n\n  const cuerpo = {\n    model: modelo,\n    max_tokens: entrada.max_tokens ?? 16000,\n    system: entrada.sistema,\n    messages: [{ role: 'user', content: entrada.mensaje }],\n    // Salida estructurada: la API garantiza un JSON que cumple el esquema\n    output_config: { format: { type: 'json_schema', schema: entrada.esquema } },\n  };\n  // El esfuerzo controla cuánto razona el modelo (low = respuestas rápidas)\n  if (esfuerzo && esfuerzo !== 'none') cuerpo.output_config.effort = esfuerzo;\n\n  const encabezados = { 'anthropic-version': '2023-06-01' };\n  // Si el modelo rechaza la solicitud por sus políticas, la API la reintenta\n  // en el modelo de respaldo recomendado (ANTHROPIC_FALLBACKS=none lo desactiva)\n  if (String($env.ANTHROPIC_FALLBACKS ?? 'default').trim() === 'default') {\n    cuerpo.fallbacks = 'default';\n    encabezados['anthropic-beta'] = 'server-side-fallback-2026-07-01';\n  }\n  return [{ json: { proveedor, modelo, url: `${base}/v1/messages`, encabezados, cuerpo } }];\n}\n\nif (proveedor === 'openai') {\n  const base = String($env.AI_BASE_URL || 'http://host.docker.internal:11434/v1').replace(/\\/+$/, '');\n  const modelo = $env.AI_MODEL || 'llama3.2';\n  const modoJson = String($env.AI_JSON_MODE || 'json_schema').trim();\n\n  const cuerpo = {\n    model: modelo,\n    temperature: 0.2,\n    stream: false,\n    messages: [\n      { role: 'system', content: entrada.sistema },\n      { role: 'user', content: entrada.mensaje },\n    ],\n  };\n  if (modoJson === 'json_schema') {\n    cuerpo.response_format = {\n      type: 'json_schema',\n      json_schema: { name: entrada.tarea || 'respuesta', strict: true, schema: entrada.esquema },\n    };\n  } else if (modoJson === 'json_object') {\n    cuerpo.response_format = { type: 'json_object' };\n  }\n  return [{ json: { proveedor, modelo, url: `${base}/chat/completions`, encabezados: {}, cuerpo } }];\n}\n\nreturn sinConfigurar(`AI_PROVIDER=\"${proveedor}\" no es válido. Usa \"anthropic\" u \"openai\".`);\n"
+      },
+      "id": "e1343475-4608-48e3-a4c5-e8d602833873",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "¿Configuración válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a6fbf01d-94f0-45f0-aeac-f3e87f3bec85",
+              "leftValue": "={{ !$json.errorConfig }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8092215f-6088-455b-a255-40df08714837",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "Llamar al proveedor de IA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "campusIaApiKey01",
+          "name": "IA · API key del proveedor"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.encabezados) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.cuerpo) }}",
+        "options": {
+          "timeout": "={{ Number($env.AI_TIMEOUT_MS) || 90000 }}",
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "f49b18fc-7473-44dd-a376-5a78e0ed06e1",
+      "position": [
+        780,
+        -80
+      ]
+    },
+    {
+      "name": "Interpretar respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Normaliza la respuesta de cualquier proveedor a un único formato:\n//    { ok: true,  datos: <JSON del modelo>, proveedor, modelo, uso }\n//    { ok: false, error: <mensaje claro>,   proveedor, modelo, detalle }\n//  Los workflows que llaman a la IA nunca ven el formato del proveedor.\n// =====================================================================\nconst peticion = $('Construir petición').first().json;\nconst base = { proveedor: peticion.proveedor, modelo: peticion.modelo };\nconst fallo = (error, detalle = null) => [{ json: { ok: false, ...base, error, detalle } }];\n\nif (peticion.errorConfig) return fallo('La IA no está configurada', peticion.errorConfig);\n\nconst respuesta = $input.first().json;\n\n// Error de red o tiempo de espera agotado (el nodo HTTP continúa con { error })\nif (respuesta.statusCode === undefined) {\n  const e = respuesta.error ?? {};\n  const motivo = typeof e === 'string' ? e : e.message || e.code || JSON.stringify(e);\n  return fallo('No fue posible comunicarse con el proveedor de IA', String(motivo).slice(0, 300));\n}\n\nconst cuerpo = respuesta.body ?? {};\nif (respuesta.statusCode >= 400) {\n  const motivo = cuerpo?.error?.message ?? cuerpo?.message ?? JSON.stringify(cuerpo);\n  return fallo(`El proveedor de IA respondió con error HTTP ${respuesta.statusCode}`, String(motivo).slice(0, 300));\n}\n\nlet textoModelo = '';\nif (peticion.proveedor === 'anthropic') {\n  // La respuesta puede traer bloques de razonamiento antes del texto final\n  if (cuerpo.stop_reason === 'refusal') {\n    return fallo('El modelo se negó a responder esta solicitud', cuerpo.stop_details?.explanation ?? null);\n  }\n  if (cuerpo.stop_reason === 'max_tokens') return fallo('La respuesta del modelo quedó incompleta (límite de tokens)');\n  textoModelo = (cuerpo.content ?? []).filter((bloque) => bloque.type === 'text').map((bloque) => bloque.text).join('');\n} else {\n  const opcion = cuerpo.choices?.[0];\n  if (opcion?.finish_reason === 'length') return fallo('La respuesta del modelo quedó incompleta (límite de tokens)');\n  textoModelo = opcion?.message?.content ?? '';\n}\n\n// Extrae el JSON aunque el modelo lo envuelva en ```json ... ```\nfunction extraerJson(valor) {\n  const t = String(valor).trim();\n  const candidatos = [t, t.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, ''), t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)];\n  for (const candidato of candidatos) {\n    try {\n      const datos = JSON.parse(candidato);\n      if (datos && typeof datos === 'object' && !Array.isArray(datos)) return datos;\n    } catch {\n      // se intenta con el siguiente candidato\n    }\n  }\n  return null;\n}\n\nconst datos = extraerJson(textoModelo);\nif (!datos) return fallo('La IA no devolvió un JSON válido', String(textoModelo).slice(0, 300));\n\nreturn [{ json: { ok: true, ...base, modelo: cuerpo.model ?? base.modelo, datos, uso: cuerpo.usage ?? null } }];\n"
+      },
+      "id": "7f5795dd-b2a3-4921-ae9e-914f180223d9",
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Entrada": {
+      "main": [
+        [
+          {
+            "node": "Construir petición",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir petición": {
+      "main": [
+        [
+          {
+            "node": "¿Configuración válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Configuración válida?": {
+      "main": [
+        [
+          {
+            "node": "Llamar al proveedor de IA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Interpretar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar al proveedor de IA": {
+      "main": [
+        [
+          {
+            "node": "Interpretar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "ia"
+    },
+    {
+      "name": "sub-workflow"
+    }
+  ]
+}

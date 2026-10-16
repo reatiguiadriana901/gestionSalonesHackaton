@@ -1,0 +1,44 @@
+# =====================================================================
+#  nginx del frontend
+#  - Sirve la interfaz (HTML, CSS, JS).
+#  - Reenvía /api/* a los webhooks de n8n: /api/reservas -> /webhook/reservas
+#    (mismo origen, así el navegador no necesita CORS).
+#  ${BACKEND_URL} se reemplaza al arrancar el contenedor (variable de entorno).
+# =====================================================================
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # DNS interno de Docker: nginx arranca aunque el backend aún no esté listo
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    location ^~ /api/ {
+        set $backend ${BACKEND_URL};
+        rewrite ^/api/(.*)$ /webhook/$1 break;
+        proxy_pass $backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # La IA y las importaciones grandes pueden tardar
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+        client_max_body_size 20m;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Sin caché agresiva: los cambios se ven al recargar
+    location ~* \.(?:css|js|svg)$ {
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+}

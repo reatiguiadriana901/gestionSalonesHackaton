@@ -1,0 +1,649 @@
+{
+  "id": "campusPanel000001",
+  "name": "Panel · Indicadores, salud e historial",
+  "nodes": [
+    {
+      "name": "Nota · GET panel",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /panel\nIndicadores de los tres módulos, incidencias prioritarias, préstamos vencidos, próximas reservas y actividad reciente.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "b45ebd46-56f7-4b57-ab50-4982c999b2a8",
+      "position": [
+        -460,
+        -40
+      ]
+    },
+    {
+      "name": "GET /panel",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "9e0f8a3d-ee6a-4b4f-a85a-5d85a4a717d8",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "panel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d948fe76-03ce-4e7b-a758-1115d410f003",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Indicadores del campus",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_build_object(\n  'generado_en', to_char(LOCALTIMESTAMP, 'YYYY-MM-DD\"T\"HH24:MI:SS'),\n  'espacios', (SELECT json_build_object(\n      'total', count(*),\n      'disponibles', count(*) FILTER (WHERE estado = 'disponible'),\n      'mantenimiento', count(*) FILTER (WHERE estado = 'mantenimiento'),\n      'inhabilitados', count(*) FILTER (WHERE estado = 'inhabilitado'),\n      'ocupados_ahora', count(*) FILTER (WHERE ocupado_ahora)) FROM v_espacios),\n  'reservas_hoy', (SELECT count(*) FROM reservas WHERE estado = 'activa' AND fecha = CURRENT_DATE),\n  'recursos', (SELECT json_build_object(\n      'total', count(*),\n      'disponibles', count(*) FILTER (WHERE estado = 'disponible'),\n      'prestados', count(*) FILTER (WHERE estado = 'prestado'),\n      'mantenimiento', count(*) FILTER (WHERE estado = 'mantenimiento'),\n      'baja', count(*) FILTER (WHERE estado = 'baja')) FROM recursos),\n  'prestamos', (SELECT json_build_object(\n      'activos', count(*) FILTER (WHERE estado = 'activo'),\n      'vencidos', count(*) FILTER (WHERE vencido)) FROM v_prestamos),\n  'incidencias', (SELECT json_build_object(\n      'abiertas', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso')),\n      'criticas', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso') AND prioridad = 'critica'),\n      'altas', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso') AND prioridad = 'alta'),\n      'medias', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso') AND prioridad = 'media'),\n      'bajas', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso') AND prioridad = 'baja'),\n      'pendientes_triaje', count(*) FILTER (WHERE estado IN ('abierta', 'en_proceso') AND triaje = 'pendiente'),\n      'clasificadas_ia', count(*) FILTER (WHERE triaje = 'ia'),\n      'resueltas', count(*) FILTER (WHERE estado IN ('resuelta', 'cerrada'))) FROM incidencias),\n  'incidencias_prioritarias', (SELECT COALESCE(json_agg(x), '[]'::json) FROM (\n      SELECT id, COALESCE(ia_resumen, left(descripcion, 90)) AS resumen, prioridad, categoria_nombre, area_nombre,\n             espacio_codigo, recurso_codigo, estado, triaje, creado_en\n        FROM v_incidencias\n       WHERE estado IN ('abierta', 'en_proceso')\n       ORDER BY prioridad_orden(prioridad), creado_en\n       LIMIT 6) x),\n  'prestamos_vencidos', (SELECT COALESCE(json_agg(x), '[]'::json) FROM (\n      SELECT id, recurso_codigo, recurso_nombre, solicitante, fecha_limite\n        FROM v_prestamos WHERE vencido ORDER BY fecha_limite LIMIT 6) x),\n  'proximas_reservas', (SELECT COALESCE(json_agg(x), '[]'::json) FROM (\n      SELECT id, espacio_codigo, espacio_nombre, solicitante, fecha, hora_inicio, hora_fin, asistentes\n        FROM v_reservas\n       WHERE estado_efectivo = 'activa' AND fecha >= CURRENT_DATE\n       ORDER BY fecha, hora_inicio\n       LIMIT 6) x),\n  'actividad_reciente', (SELECT COALESCE(json_agg(x), '[]'::json) FROM (\n      SELECT h.id, h.entidad, h.entidad_id, h.estado_anterior, h.estado_nuevo, h.motivo, h.origen, h.registrado_en,\n             CASE h.entidad\n               WHEN 'espacio' THEN (SELECT codigo FROM espacios WHERE id = h.entidad_id)\n               WHEN 'recurso' THEN (SELECT codigo FROM recursos WHERE id = h.entidad_id)\n               ELSE '#' || h.entidad_id\n             END AS referencia\n        FROM historial_estados h\n       ORDER BY h.id DESC\n       LIMIT 10) x)\n) AS data;",
+        "options": {}
+      },
+      "id": "88fb82e8-e569-4cd9-acc4-4b77672b8e41",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "Responder panel",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "686f4d84-f838-47a3-a9ad-bdb5a4b26a24",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "Nota · GET salud",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /salud\nEstado de la base de datos y de la configuración de IA. Con `?ia=1` hace una consulta **real** de prueba al modelo y mide la latencia.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "86aa0e5f-db45-44a5-a8e9-12ae8cf3c014",
+      "position": [
+        -460,
+        220
+      ]
+    },
+    {
+      "name": "GET /salud",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "fa0c471a-3e42-4ec5-adbb-9f37130436af",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "salud",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e60a88d3-59d3-4ea5-a40b-80c20566544d",
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "name": "Verificar base de datos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS hora_campus,\n       json_build_object(\n         'espacios', (SELECT count(*) FROM espacios),\n         'recursos', (SELECT count(*) FROM recursos),\n         'reservas', (SELECT count(*) FROM reservas),\n         'prestamos', (SELECT count(*) FROM prestamos),\n         'incidencias', (SELECT count(*) FROM incidencias)\n       ) AS registros;",
+        "options": {}
+      },
+      "id": "2065c547-b0d1-4079-a952-0a9f996c80fe",
+      "position": [
+        260,
+        260
+      ]
+    },
+    {
+      "name": "Estado de los servicios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Estado de los servicios: base de datos y configuración de la IA.\n//  Con ?ia=1 además se hace una consulta real de prueba al modelo.\n// =====================================================================\nconst bd = $input.first().json;\nconst consulta = $('GET /salud').first().json.query ?? {};\nconst proveedor = String($env.AI_PROVIDER || 'anthropic').trim().toLowerCase();\nconst modelo = $env.AI_MODEL || (proveedor === 'anthropic' ? 'claude-opus-5-5' : 'llama3.2');\n\nconst ia = {\n  proveedor,\n  modelo,\n  configurada: proveedor === 'anthropic' ? Boolean($env.AI_API_KEY) : proveedor === 'openai',\n  endpoint:\n    proveedor === 'openai'\n      ? $env.AI_BASE_URL || 'http://host.docker.internal:11434/v1'\n      : $env.AI_BASE_URL || 'https://api.anthropic.com',\n};\n\nreturn [\n  {\n    json: {\n      probarIa: ['1', 'true', 'si'].includes(String(consulta.ia ?? '').toLowerCase()),\n      data: {\n        servicio: 'ok',\n        hora_campus: bd.hora_campus,\n        base_de_datos: { conectada: true, registros: bd.registros },\n        ia,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "9245913d-904e-4fe5-af49-24de9b445466",
+      "position": [
+        520,
+        260
+      ]
+    },
+    {
+      "name": "¿Probar la IA?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0ca4258a-61dd-4399-a750-f13dd30b6e5f",
+              "leftValue": "={{ $json.probarIa }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "05c94559-b398-4742-a724-ce0628198290",
+      "position": [
+        780,
+        260
+      ]
+    },
+    {
+      "name": "Consulta de prueba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Consulta mínima para comprobar que el proveedor de IA responde\nreturn [\n  {\n    json: {\n      tarea: 'prueba_conexion',\n      sistema: 'Eres un verificador de conexión. Responde solo con el JSON solicitado.',\n      mensaje: 'Confirma que recibiste este mensaje respondiendo con estado \"listo\".',\n      esquema: {\n        type: 'object',\n        additionalProperties: false,\n        required: ['estado'],\n        properties: { estado: { type: 'string', enum: ['listo'] } },\n      },\n      max_tokens: 2000,\n      inicio: Date.now(),\n    },\n  },\n];\n"
+      },
+      "id": "86e46db7-0d08-467e-a64e-7b5d28cbf0d3",
+      "position": [
+        1040,
+        160
+      ]
+    },
+    {
+      "name": "Probar el cliente de IA",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusClienteIA01",
+          "mode": "list",
+          "cachedResultName": "IA · Cliente del modelo (proveedor configurable)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "167d9f62-d2dc-45b6-abe1-f949fade2a8a",
+      "position": [
+        1300,
+        160
+      ]
+    },
+    {
+      "name": "Resultado de la prueba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// Agrega el resultado de la prueba real de IA al estado de los servicios\nconst salud = $('Estado de los servicios').first().json.data;\nconst inicio = $('Consulta de prueba').first().json.inicio;\nconst ia = $input.first().json;\n\nconst prueba = {\n  ok: ia.ok === true && ia.datos?.estado === 'listo',\n  latencia_ms: Date.now() - inicio,\n  modelo_respondio: ia.modelo ?? null,\n  error: ia.ok === true ? null : `${ia.error ?? 'sin respuesta'}${ia.detalle ? `: ${ia.detalle}` : ''}`,\n};\n\nreturn [{ json: { data: { ...salud, ia: { ...salud.ia, prueba } } } }];\n"
+      },
+      "id": "1587d13e-2124-421b-a3ce-4962648cfc2e",
+      "position": [
+        1560,
+        160
+      ]
+    },
+    {
+      "name": "Responder salud",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "751b0308-b809-455a-a35f-42347fce2451",
+      "position": [
+        1820,
+        260
+      ]
+    },
+    {
+      "name": "Nota · GET historial",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /historial\nTrazabilidad de cambios de estado (registrada por disparadores de la BD). Filtros: `?entidad=recurso&id=3&limite=50`.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "ac75d1eb-0d3e-4b08-a321-c2f802574d42",
+      "position": [
+        -460,
+        500
+      ]
+    },
+    {
+      "name": "GET /historial",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "5f910b0b-a4b7-4265-a6b8-fdffe130e0ff",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "historial",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a521a88c-58cf-4868-a569-f17f9edf1b9e",
+      "position": [
+        0,
+        540
+      ]
+    },
+    {
+      "name": "Consultar historial",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(h ORDER BY h.id DESC), '[]'::json) AS data\n  FROM (SELECT id, entidad, entidad_id, estado_anterior, estado_nuevo, motivo, origen, registrado_en\n          FROM historial_estados\n         WHERE ($1 = '' OR entidad = $1) AND ($2 = '' OR entidad_id::text = $2)\n         ORDER BY id DESC\n         LIMIT $3) h;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.query.entidad ?? ''), String($json.query.id ?? ''), Math.min(Math.max(parseInt($json.query.limite, 10) || 100, 1), 500) ] }}"
+        }
+      },
+      "id": "840dd0b9-24ad-4548-a7b4-273b9b01280b",
+      "position": [
+        260,
+        540
+      ]
+    },
+    {
+      "name": "Responder historial",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "5a578259-7741-42f1-a13b-89b4e00b7885",
+      "position": [
+        520,
+        540
+      ]
+    },
+    {
+      "name": "Nota · GET catálogos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /catalogos\nCategorías, áreas responsables, prioridades y estados (los mismos que valida el triaje).",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "987e6323-68ed-4dbc-aeb2-e02eb791d94e",
+      "position": [
+        -460,
+        760
+      ]
+    },
+    {
+      "name": "GET /catalogos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "4c18e309-2e10-4775-ad42-4424c57fc1a6",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "catalogos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6de9f214-195c-42c3-ad4c-6597c51beafe",
+      "position": [
+        0,
+        800
+      ]
+    },
+    {
+      "name": "Consultar catálogos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT json_build_object(\n  'categorias', (SELECT json_agg(c ORDER BY c.nombre) FROM categorias_incidencia c),\n  'areas', (SELECT json_agg(a ORDER BY a.nombre) FROM areas_responsables a),\n  'prioridades', json_build_array('critica', 'alta', 'media', 'baja'),\n  'estados_incidencia', json_build_array('abierta', 'en_proceso', 'resuelta', 'cerrada')\n) AS data;",
+        "options": {}
+      },
+      "id": "b5742429-cfbe-462c-a514-3424200456b5",
+      "position": [
+        260,
+        800
+      ]
+    },
+    {
+      "name": "Responder catálogos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "d6713b97-bb38-4b4c-aa71-b03efd29dc3f",
+      "position": [
+        520,
+        800
+      ]
+    },
+    {
+      "name": "Nota · Errores de base de datos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Errores de base de datos\nTodas las consultas envían sus errores aquí (salida roja). Las violaciones de restricciones (p. ej. dos reservas simultáneas) se traducen a mensajes claros con su código HTTP.",
+        "height": 200,
+        "width": 400,
+        "color": 3
+      },
+      "id": "0fbddd82-8dd2-4bbc-ad80-14415ceaad8f",
+      "position": [
+        -460,
+        1040
+      ]
+    },
+    {
+      "name": "Traducir error de base de datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Traduce los errores de PostgreSQL a respuestas claras.\n//  Las restricciones de la base de datos son la última barrera de\n//  integridad: si dos peticiones simultáneas se saltan una regla, la base\n//  de datos rechaza la segunda y aquí se explica el motivo al usuario.\n// =====================================================================\nconst RESTRICCIONES = {\n  reservas_sin_solapamiento: [409, 'CONFLICTO_HORARIO', 'El espacio ya tiene una reserva activa que se cruza con ese horario.'],\n  espacios_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un espacio con ese código.'],\n  recursos_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un recurso con ese código.'],\n  prestamos_un_activo_por_recurso: [409, 'RECURSO_YA_PRESTADO', 'El recurso ya tiene un préstamo activo.'],\n  recursos_espacio_id_fkey: [422, 'ESPACIO_INEXISTENTE', 'El espacio indicado no existe.'],\n  espacios_capacidad_positiva: [422, 'CAPACIDAD_INVALIDA', 'La capacidad debe ser mayor que cero.'],\n  reservas_rango_horario: [422, 'HORARIO_INVALIDO', 'La hora de fin debe ser posterior a la de inicio.'],\n  prestamos_limite_posterior: [422, 'FECHA_INVALIDA', 'La fecha límite debe ser posterior a la fecha del préstamo.'],\n  incidencias_clasificacion_completa: [422, 'CLASIFICACION_INCOMPLETA', 'La clasificación requiere categoría, prioridad y área.'],\n};\n\nconst fallo = $input.first().json;\nconst detalle = `${fallo.message ?? ''} ${fallo.error?.description ?? ''}`;\n\nconst restriccion = Object.keys(RESTRICCIONES).find((nombre) => detalle.includes(nombre));\nif (restriccion) {\n  const [status, code, message] = RESTRICCIONES[restriccion];\n  return [{ json: { status, body: { ok: false, error: { code, message, details: [{ regla: 'BD', mensaje: restriccion }] } } } }];\n}\n\nconst sinConexion = /Connection refused|ECONNREFUSED|Host not found|ENOTFOUND|timed out/i.test(detalle);\nreturn [\n  {\n    json: {\n      status: sinConexion ? 503 : 500,\n      body: {\n        ok: false,\n        error: {\n          code: sinConexion ? 'BD_NO_DISPONIBLE' : 'ERROR_BASE_DE_DATOS',\n          message: sinConexion\n            ? 'La base de datos no está disponible en este momento.'\n            : 'No fue posible completar la operación en la base de datos.',\n          details: [{ regla: 'BD', mensaje: String(fallo.message ?? '').slice(0, 300) }],\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "4db61664-641c-49b6-a7c9-d77e2845471b",
+      "position": [
+        0,
+        1080
+      ]
+    },
+    {
+      "name": "Responder error de BD",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "2f159b90-5f10-4493-a6d4-ccf9a857e765",
+      "position": [
+        260,
+        1080
+      ]
+    }
+  ],
+  "connections": {
+    "GET /panel": {
+      "main": [
+        [
+          {
+            "node": "Indicadores del campus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Indicadores del campus": {
+      "main": [
+        [
+          {
+            "node": "Responder panel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /salud": {
+      "main": [
+        [
+          {
+            "node": "Verificar base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar base de datos": {
+      "main": [
+        [
+          {
+            "node": "Estado de los servicios",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estado de los servicios": {
+      "main": [
+        [
+          {
+            "node": "¿Probar la IA?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Probar la IA?": {
+      "main": [
+        [
+          {
+            "node": "Consulta de prueba",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder salud",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consulta de prueba": {
+      "main": [
+        [
+          {
+            "node": "Probar el cliente de IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probar el cliente de IA": {
+      "main": [
+        [
+          {
+            "node": "Resultado de la prueba",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado de la prueba": {
+      "main": [
+        [
+          {
+            "node": "Responder salud",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /historial": {
+      "main": [
+        [
+          {
+            "node": "Consultar historial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar historial": {
+      "main": [
+        [
+          {
+            "node": "Responder historial",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /catalogos": {
+      "main": [
+        [
+          {
+            "node": "Consultar catálogos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar catálogos": {
+      "main": [
+        [
+          {
+            "node": "Responder catálogos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traducir error de base de datos": {
+      "main": [
+        [
+          {
+            "node": "Responder error de BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "api"
+    },
+    {
+      "name": "panel"
+    }
+  ]
+}

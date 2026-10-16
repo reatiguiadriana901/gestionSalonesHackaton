@@ -1,0 +1,168 @@
+{
+  "id": "campusEfectos0001",
+  "name": "Incidencias · Efectos en espacios y recursos",
+  "nodes": [
+    {
+      "name": "Nota · Regla central",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Regla central unificada (RN-08, RN-10, RN-11)\nSe ejecuta cada vez que una incidencia se clasifica, cambia de estado o se importa.\n- Incidencia abierta y bloqueante → su recurso o espacio pasa a **mantenimiento** (ya no se puede prestar ni reservar).\n- Sin incidencias bloqueantes abiertas → se **rehabilita** automáticamente.\n\n**Entrada:** uno o varios ítems `{ incidencia_id }`",
+        "height": 240,
+        "width": 1040,
+        "color": 4
+      },
+      "id": "8b3e0963-a3b2-46e6-a8e6-90d496ad26e8",
+      "position": [
+        -60,
+        -320
+      ]
+    },
+    {
+      "name": "Entrada",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "611ece2d-307a-420c-a7cd-6de58e59a986",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Cargar incidencia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT row_to_json(i) FROM incidencias i WHERE i.id = $1) AS incidencia,\n  (SELECT e.estado FROM espacios e JOIN incidencias i ON i.espacio_id = e.id WHERE i.id = $1) AS espacio_estado_antes,\n  (SELECT r.estado FROM recursos r JOIN incidencias i ON i.recurso_id = r.id WHERE i.id = $1) AS recurso_estado_antes;",
+        "options": {
+          "queryReplacement": "={{ [ $json.incidencia_id ?? null ] }}"
+        }
+      },
+      "id": "3d8e453d-10ee-4795-a9a8-2ab493bc9a35",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "Decidir efecto (RN-10)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  REGLA CENTRAL UNIFICADA: efecto de una incidencia en los otros módulos\n//\n//  RN-10  Una incidencia abierta con prioridad bloqueante deja fuera de\n//         servicio (\"mantenimiento\") lo que afecta, para que no se pueda\n//         reservar ni prestar algo que está fallando:\n//           - el recurso involucrado se bloquea;\n//           - el espacio se bloquea solo si la categoría compromete el\n//             espacio completo (un proyector dañado no inhabilita el aula).\n//  RN-08  El daño reportado en una devolución siempre bloquea el recurso.\n//  RN-11  Cuando ya no quedan incidencias bloqueantes abiertas, el espacio\n//         o recurso se rehabilita automáticamente (siguiente nodo).\n// =====================================================================\nconst PRIORIDADES_QUE_BLOQUEAN = ['critica', 'alta'];\nconst CATEGORIAS_QUE_BLOQUEAN_EL_ESPACIO = ['seguridad', 'infraestructura'];\nconst ESTADOS_ABIERTOS = ['abierta', 'en_proceso'];\n\n// Procesa todos los ítems: la importación evalúa muchas incidencias a la vez\nreturn $input.all().map(({ json }) => {\n  const incidencia = json.incidencia;\n  if (!incidencia) return { json: { incidencia_id: null, bloquea_espacio: false, bloquea_recurso: false } };\n\n  const abierta = ESTADOS_ABIERTOS.includes(incidencia.estado);\n  const prioridadBloqueante = PRIORIDADES_QUE_BLOQUEAN.includes(incidencia.prioridad);\n  const danioEnDevolucion = incidencia.origen === 'devolucion';\n\n  const bloqueaRecurso = abierta && Boolean(incidencia.recurso_id) && (prioridadBloqueante || danioEnDevolucion);\n  const bloqueaEspacio =\n    abierta &&\n    Boolean(incidencia.espacio_id) &&\n    prioridadBloqueante &&\n    CATEGORIAS_QUE_BLOQUEAN_EL_ESPACIO.includes(incidencia.categoria);\n\n  return {\n    json: {\n      incidencia_id: incidencia.id,\n      bloquea_espacio: bloqueaEspacio,\n      bloquea_recurso: bloqueaRecurso,\n      espacio_estado_antes: json.espacio_estado_antes,\n      recurso_estado_antes: json.recurso_estado_antes,\n    },\n  };\n});\n"
+      },
+      "id": "b034a1ee-bab7-4ca9-a1f1-0458a84cf609",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "Aplicar bloqueo o rehabilitación",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE incidencias SET bloquea_espacio = $2, bloquea_recurso = $3 WHERE id = $1;\n\n-- RN-10: el recurso afectado queda en mantenimiento\nUPDATE recursos r\n   SET estado = 'mantenimiento', origen_estado = 'incidencia',\n       motivo_estado = 'Incidencia #' || i.id || ' (' || COALESCE(i.prioridad, 'daño reportado') || '): '\n                       || COALESCE(i.ia_resumen, left(i.descripcion, 90))\n  FROM incidencias i\n WHERE i.id = $1 AND i.bloquea_recurso AND r.id = i.recurso_id AND r.estado = 'disponible';\n\n-- RN-10: el espacio afectado queda en mantenimiento\nUPDATE espacios e\n   SET estado = 'mantenimiento', origen_estado = 'incidencia',\n       motivo_estado = 'Incidencia #' || i.id || ' (' || i.prioridad || '): ' || COALESCE(i.ia_resumen, left(i.descripcion, 90))\n  FROM incidencias i\n WHERE i.id = $1 AND i.bloquea_espacio AND e.id = i.espacio_id AND e.estado = 'disponible';\n\n-- RN-11: rehabilita el recurso si ya no quedan incidencias bloqueantes abiertas\nUPDATE recursos r\n   SET estado = 'disponible', origen_estado = 'incidencia',\n       motivo_estado = 'Rehabilitado: sin incidencias bloqueantes abiertas'\n  FROM incidencias i\n WHERE i.id = $1 AND NOT i.bloquea_recurso AND r.id = i.recurso_id\n   AND r.estado = 'mantenimiento' AND r.origen_estado IN ('incidencia', 'devolucion')\n   AND NOT EXISTS (SELECT 1 FROM incidencias o\n                    WHERE o.recurso_id = r.id AND o.bloquea_recurso AND o.estado IN ('abierta', 'en_proceso'));\n\n-- RN-11: rehabilita el espacio si ya no quedan incidencias bloqueantes abiertas\nUPDATE espacios e\n   SET estado = 'disponible', origen_estado = 'incidencia',\n       motivo_estado = 'Rehabilitado: sin incidencias bloqueantes abiertas'\n  FROM incidencias i\n WHERE i.id = $1 AND NOT i.bloquea_espacio AND e.id = i.espacio_id\n   AND e.estado = 'mantenimiento' AND e.origen_estado IN ('incidencia', 'devolucion')\n   AND NOT EXISTS (SELECT 1 FROM incidencias o\n                    WHERE o.espacio_id = e.id AND o.bloquea_espacio AND o.estado IN ('abierta', 'en_proceso'));\n\nSELECT\n  i.id AS incidencia_id, i.bloquea_espacio, i.bloquea_recurso,\n  $4 AS espacio_estado_antes, $5 AS recurso_estado_antes,\n  (SELECT row_to_json(v) FROM v_incidencias v WHERE v.id = i.id) AS incidencia,\n  (SELECT row_to_json(x) FROM (SELECT id, codigo, nombre, estado, motivo_estado FROM espacios WHERE id = i.espacio_id) x) AS espacio,\n  (SELECT row_to_json(x) FROM (SELECT id, codigo, nombre, estado, motivo_estado FROM recursos WHERE id = i.recurso_id) x) AS recurso,\n  (SELECT COALESCE(json_agg(json_build_object(\n            'id', r.id, 'fecha', r.fecha, 'solicitante', r.solicitante,\n            'hora_inicio', to_char(r.hora_inicio, 'HH24:MI'), 'hora_fin', to_char(r.hora_fin, 'HH24:MI')\n          ) ORDER BY r.fecha, r.hora_inicio), '[]'::json)\n     FROM reservas r\n    WHERE i.bloquea_espacio AND r.espacio_id = i.espacio_id AND r.estado = 'activa'\n      AND (r.fecha + r.hora_fin) > LOCALTIMESTAMP) AS reservas_afectadas\nFROM incidencias i\nWHERE i.id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.incidencia_id ?? null, $json.bloquea_espacio, $json.bloquea_recurso, $json.espacio_estado_antes ?? null, $json.recurso_estado_antes ?? null ] }}"
+        }
+      },
+      "id": "f4d9f6e4-e1ac-455a-a9c6-73ca9dd7b49e",
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "name": "Resumir cambios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Describe qué cambió en espacios y recursos por cada incidencia\n// =====================================================================\nreturn $input.all().map(({ json: fila }) => {\n  const cambios = [];\n  if (fila.espacio && fila.espacio_estado_antes && fila.espacio.estado !== fila.espacio_estado_antes) {\n    cambios.push(`El espacio ${fila.espacio.codigo} pasó de \"${fila.espacio_estado_antes}\" a \"${fila.espacio.estado}\"`);\n  }\n  if (fila.recurso && fila.recurso_estado_antes && fila.recurso.estado !== fila.recurso_estado_antes) {\n    cambios.push(`El recurso ${fila.recurso.codigo} pasó de \"${fila.recurso_estado_antes}\" a \"${fila.recurso.estado}\"`);\n  }\n  return { json: { ...fila, cambios } };\n});\n"
+      },
+      "id": "ebbdb41f-a6dd-41fd-a405-d719cc12076a",
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Entrada": {
+      "main": [
+        [
+          {
+            "node": "Cargar incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar incidencia": {
+      "main": [
+        [
+          {
+            "node": "Decidir efecto (RN-10)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir efecto (RN-10)": {
+      "main": [
+        [
+          {
+            "node": "Aplicar bloqueo o rehabilitación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar bloqueo o rehabilitación": {
+      "main": [
+        [
+          {
+            "node": "Resumir cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "sub-workflow"
+    },
+    {
+      "name": "incidencias"
+    }
+  ]
+}

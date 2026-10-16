@@ -1,0 +1,153 @@
+/* =====================================================================
+   Base: reinicio, tipografía y utilidades generales
+   ===================================================================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--fuente);
+  font-size: var(--texto-base);
+  line-height: 1.5;
+  color: var(--color-texto);
+  background: var(--color-fondo);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--texto-xl);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--texto-lg);
+  line-height: 1.3;
+}
+
+h3 {
+  font-size: var(--texto-base);
+}
+
+a {
+  color: var(--color-primario);
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+kbd {
+  font-family: var(--fuente-mono);
+  font-size: 0.9em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primario);
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* Accesibilidad: enlace para saltar la navegación */
+.saltar-contenido {
+  position: absolute;
+  left: -999px;
+  top: var(--esp-2);
+  z-index: 100;
+  padding: var(--esp-2) var(--esp-4);
+  border-radius: var(--radio-sm);
+  background: var(--color-primario);
+  color: #fff;
+}
+
+.saltar-contenido:focus {
+  left: var(--esp-2);
+}
+
+.solo-lectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Utilidades */
+.texto-suave {
+  color: var(--color-texto-suave);
+}
+
+.texto-tenue {
+  color: var(--color-texto-tenue);
+}
+
+.texto-sm {
+  font-size: var(--texto-sm);
+}
+
+.texto-xs {
+  font-size: var(--texto-xs);
+}
+
+.mono {
+  font-family: var(--fuente-mono);
+}
+
+.fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--esp-2);
+}
+
+.fila--entre {
+  justify-content: space-between;
+}
+
+.pila {
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-3);
+}
+
+.pila--amplia {
+  gap: var(--esp-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

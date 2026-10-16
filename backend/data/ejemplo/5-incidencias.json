@@ -1,0 +1,10 @@
+[
+  { "descripcion": "El proyector del aula A-101 no enciende y la luz parpadea en naranja", "reportado_por": "Laura Gómez", "espacio": "A-101", "recurso": "PROY-01" },
+  { "descripcion": "El wifi del segundo piso se desconecta cada diez minutos", "reportado_por": "Ana Ruiz" },
+  { "descripcion": "Cable eléctrico expuesto junto a la puerta del laboratorio de hardware", "reportado_por": "Vigilancia", "espacio": "L-202", "categoria": "Seguridad", "prioridad": "Crítica", "area": "seguridad", "estado": "abierta" },
+  { "descripcion": "Falta papel higiénico en los baños del piso 1", "reportado_por": "Pedro Díaz", "categoria": "aseo", "prioridad": "baja", "area": "Servicios generales", "estado": "resuelta" },
+  { "descripcion": "La tablet TAB-02 no carga aunque esté conectada toda la noche", "reportado_por": "Valentina Mora", "recurso": "TAB-02", "categoria": "equipo_tecnologico", "prioridad": "urgentísima", "area": "soporte_ti" },
+  { "descripcion": "Aire acondicionado del auditorio no enfría", "reportado_por": "Dirección académica", "espacio": "AUD-1", "estado": "en curso" },
+  { "descripcion": "", "reportado_por": "Anónimo" },
+  { "descripcion": "Silla rota en el aula del cuarto piso", "reportado_por": "Mateo Rincón", "espacio": "Z-404" }
+]

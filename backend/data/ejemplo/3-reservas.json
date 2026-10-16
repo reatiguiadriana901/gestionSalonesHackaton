@@ -1,0 +1,15 @@
+[
+  { "espacio": "A-101", "solicitante": "Laura Gómez", "motivo": "Clase de JavaScript", "asistentes": 25, "fecha": "2026-10-16", "hora_inicio": "08:00", "hora_fin": "10:00" },
+  { "espacio": "A-101", "solicitante": "Carlos Pérez", "motivo": "Taller de Git", "asistentes": 20, "fecha": "2026-10-16", "hora_inicio": "14:00", "hora_fin": "16:00" },
+  { "espacio": "L-201", "solicitante": "Ana Ruiz", "motivo": "Práctica de bases de datos", "asistentes": 22, "fecha": "2026-10-17", "hora_inicio": "08:00", "hora_fin": "12:00" },
+  { "espacio": "AUD-1", "solicitante": "Dirección académica", "motivo": "Charla de empleabilidad", "asistentes": 110, "fecha": "2026-10-20", "hora_inicio": "15:00", "hora_fin": "17:00" },
+  { "espacio": "C-01", "solicitante": "Equipo Hackatón 3", "motivo": "Reunión de equipo", "asistentes": 4, "fecha": "2026-10-16", "hora_inicio": "10:00", "hora_fin": "11:00" },
+  { "espacio": "S-301", "solicitante": "Coordinación", "motivo": "Comité académico", "asistentes": 8, "fecha": "2026-10-21", "hora_inicio": "9:00 am", "hora_fin": "10:30 am" },
+  { "espacio": "A-102", "solicitante": "Pedro Díaz", "asistentes": 15, "fecha": "17/10/2026", "hora_inicio": "13:00", "hora_fin": "15:00", "estado": "confirmada" },
+  { "espacio": "A-201", "solicitante": "Reserva cancelada", "asistentes": 30, "fecha": "2026-10-16", "hora_inicio": "08:00", "hora_fin": "09:00", "estado": "cancelada" },
+  { "espacio": "A-101", "solicitante": "Sofía León", "motivo": "Se cruza con la clase de JavaScript", "asistentes": 10, "fecha": "2026-10-16", "hora_inicio": "09:00", "hora_fin": "11:00" },
+  { "espacio": "C-02", "solicitante": "Grupo de estudio", "asistentes": 12, "fecha": "2026-10-18", "hora_inicio": "10:00", "hora_fin": "12:00" },
+  { "espacio": "A-999", "solicitante": "Espacio inexistente", "asistentes": 5, "fecha": "2026-10-18", "hora_inicio": "10:00", "hora_fin": "11:00" },
+  { "espacio": "A-102", "solicitante": "Horario invertido", "asistentes": 5, "fecha": "2026-10-19", "hora_inicio": "12:00", "hora_fin": "10:00" },
+  { "espacio": "A-201", "solicitante": "Fecha imposible", "asistentes": 5, "fecha": "2026-02-30", "hora_inicio": "10:00", "hora_fin": "11:00" }
+]

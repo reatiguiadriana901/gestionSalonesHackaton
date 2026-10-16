@@ -1,0 +1,5 @@
+# Solo se copian docker/ y workflows/ a la imagen de n8n
+database/
+data/
+scripts/
+*.md

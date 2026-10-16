@@ -1,0 +1,11 @@
+[
+  { "recurso": "PC-001", "solicitante": "Laura Gómez", "fecha_prestamo": "2026-10-15 08:00", "fecha_limite": "2026-10-17 18:00", "estado": "activo" },
+  { "recurso": "PC-002", "solicitante": "Mateo Rincón", "fecha_prestamo": "2026-10-10 08:00", "fecha_limite": "2026-10-13 18:00", "estado": "activo" },
+  { "recurso": "PROY-02", "solicitante": "Ana Ruiz", "fecha_prestamo": "2026-10-01 08:00", "fecha_limite": "2026-10-02 18:00", "fecha_devolucion": "2026-10-02 17:00", "estado": "devuelto" },
+  { "recurso": "PC-003", "solicitante": "Carlos Pérez", "fecha_prestamo": "2026-10-05 08:00", "fecha_limite": "2026-10-06 18:00", "fecha_devolucion": "2026-10-06 12:00" },
+  { "recurso": "PC-001", "solicitante": "Otra persona", "fecha_prestamo": "2026-10-15 09:00", "fecha_limite": "2026-10-16 18:00", "estado": "activo" },
+  { "recurso": "TAB-02", "solicitante": "Valentina Mora", "fecha_prestamo": "2026-10-15 08:00", "fecha_limite": "2026-10-16 18:00", "estado": "activo" },
+  { "recurso": "PC-004", "solicitante": "Juan Ortiz", "fecha_prestamo": "2026-10-15 08:00", "fecha_limite": "2026-10-14 18:00", "estado": "activo" },
+  { "recurso": "PC-777", "solicitante": "Recurso inexistente", "fecha_prestamo": "2026-10-15 08:00", "fecha_limite": "2026-10-16 18:00" },
+  { "recurso": "CAM-01", "solicitante": "Coordinación", "fecha_prestamo": "2026-10-14 08:00", "fecha_limite": "2026-10-15 18:00", "estado": "devuelto" }
+]

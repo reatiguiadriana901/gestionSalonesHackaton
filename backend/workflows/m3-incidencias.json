@@ -1,0 +1,1047 @@
+{
+  "id": "campusIncidenc001",
+  "name": "Módulo 3 · Incidencias y triaje con IA",
+  "nodes": [
+    {
+      "name": "Nota · GET incidencias",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### GET /incidencias\nOrdenadas por prioridad. Filtros: `?estado=`, `?prioridad=`, `?triaje=pendiente|ia|manual`.",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "143c61da-f27a-491b-a31e-57f6b0fe3854",
+      "position": [
+        -460,
+        -40
+      ]
+    },
+    {
+      "name": "GET /incidencias",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "870383fa-acb4-4efe-ab8c-cf7e713311d2",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "incidencias",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "09985b77-d2c7-43a7-ac49-204304479aa1",
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Consultar incidencias",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(v ORDER BY v.estado IN ('resuelta', 'cerrada'), prioridad_orden(v.prioridad), v.creado_en DESC), '[]'::json) AS data\n  FROM v_incidencias v\n WHERE ($1 = '' OR v.estado = $1)\n   AND ($2 = '' OR v.prioridad = $2)\n   AND ($3 = '' OR v.triaje = $3);",
+        "options": {
+          "queryReplacement": "={{ [ String($json.query.estado ?? ''), String($json.query.prioridad ?? ''), String($json.query.triaje ?? '') ] }}"
+        }
+      },
+      "id": "bd187489-19e9-4edc-adce-cea1fd2af171",
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "name": "Responder incidencias",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, data: $json.data } }}",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "id": "9a7c5126-de38-4976-adc2-e12c8cbbd1f6",
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "name": "Nota · POST incidencias",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### POST /incidencias ★ IA (flujo vertical principal)\n1. Se valida y **registra** la incidencia (nunca se pierde, aunque falle la IA).\n2. El sub-workflow de **triaje** la clasifica con IA y aplica la regla central (bloqueos).\n3. Se responde con la clasificación y los efectos.",
+        "height": 230,
+        "width": 400,
+        "color": 7
+      },
+      "id": "c2bf88e6-5395-4042-a067-fe834aa676e6",
+      "position": [
+        -460,
+        240
+      ]
+    },
+    {
+      "name": "POST /incidencias",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "3dad0ea6-2ddf-4fc8-a35e-090696b2344c",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incidencias",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8fe674fd-f9b7-4f7a-acb3-e12fb2f65973",
+      "position": [
+        0,
+        280
+      ]
+    },
+    {
+      "name": "Validar referencias",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT row_to_json(x) FROM (SELECT id, codigo, nombre FROM espacios WHERE id::text = $1) x) AS espacio,\n  (SELECT row_to_json(x) FROM (SELECT id, codigo, nombre FROM recursos WHERE id::text = $2) x) AS recurso;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.espacio_id ?? ''), String($json.body.recurso_id ?? '') ] }}"
+        }
+      },
+      "id": "5d973fcf-9f29-4d3a-afc5-cbfd8be35bb2",
+      "position": [
+        260,
+        280
+      ]
+    },
+    {
+      "name": "Validar reporte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Reporte de una incidencia o solicitud: valida antes de registrarla\n// =====================================================================\nconst LARGO_MINIMO_DESCRIPCION = 10;\nconst LARGO_MAXIMO_DESCRIPCION = 2000;\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('POST /incidencias').first().json.body ?? {};\nconst ctx = $input.first().json;\n\nconst descripcion = texto(cuerpo.descripcion);\nconst reportadoPor = texto(cuerpo.reportado_por);\n\nconst errores = [];\nif (descripcion.length < LARGO_MINIMO_DESCRIPCION) {\n  errores.push(`Describe la incidencia con al menos ${LARGO_MINIMO_DESCRIPCION} caracteres.`);\n}\nif (descripcion.length > LARGO_MAXIMO_DESCRIPCION) {\n  errores.push(`La descripción admite máximo ${LARGO_MAXIMO_DESCRIPCION} caracteres.`);\n}\nif (!reportadoPor || reportadoPor.length > 120) errores.push('Indica quién reporta la incidencia.');\nif (texto(cuerpo.espacio_id) && !ctx.espacio) errores.push('El espacio seleccionado no existe.');\nif (texto(cuerpo.recurso_id) && !ctx.recurso) errores.push('El recurso seleccionado no existe.');\nif (errores.length) {\n  return respuestaError(422, 'DATOS_INVALIDOS', errores[0], errores.map((mensaje) => ({ regla: 'DATOS', mensaje })));\n}\n\nreturn [\n  {\n    json: {\n      ok: true,\n      descripcion,\n      reportado_por: reportadoPor,\n      espacio_id: ctx.espacio?.id ?? null,\n      recurso_id: ctx.recurso?.id ?? null,\n    },\n  },\n];\n"
+      },
+      "id": "58412b8a-515b-4ab5-abb5-d2f63191ac93",
+      "position": [
+        520,
+        280
+      ]
+    },
+    {
+      "name": "¿Reporte válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "02b3dd1f-d0ee-4b5c-a413-57eac9458b0c",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "be633368-e6d0-4c00-a5a5-5218d9f2c720",
+      "position": [
+        780,
+        280
+      ]
+    },
+    {
+      "name": "Registrar incidencia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO incidencias (descripcion, reportado_por, espacio_id, recurso_id, origen, motivo_estado, origen_estado)\nVALUES ($1, $2, $3, $4, 'usuario', 'Reportada por ' || $2, 'usuario')\nRETURNING id AS incidencia_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.descripcion, $json.reportado_por, $json.espacio_id ?? null, $json.recurso_id ?? null ] }}"
+        }
+      },
+      "id": "fb3b12a0-c461-42fc-a912-8728f32665a0",
+      "position": [
+        1040,
+        200
+      ]
+    },
+    {
+      "name": "Triaje con IA",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusTriajeIA001",
+          "mode": "list",
+          "cachedResultName": "IA · Triaje de incidencias"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "bcf03ba7-8b6b-4264-a34d-032406ad0e9d",
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "name": "Armar respuesta del reporte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Respuesta del reporte: la incidencia siempre queda registrada, aunque\n//  el triaje con IA falle (en ese caso queda pendiente de triaje manual).\n// =====================================================================\n// Resume en una frase el resultado del triaje y sus efectos en otros módulos\nconst describirTriaje = (resultado) => {\n  if (!resultado.clasificada) return `quedó pendiente de triaje manual (${resultado.error})`;\n  const incidencia = resultado.incidencia;\n  const quien = resultado.origen === 'manual' ? 'clasificada manualmente' : 'clasificada por la IA';\n  const partes = [\n    `${quien} como ${incidencia.categoria_nombre}, prioridad ${incidencia.prioridad}, asignada a ${incidencia.area_nombre}`,\n  ];\n  const efectos = resultado.efectos ?? {};\n  partes.push(...(efectos.cambios ?? []));\n  if (efectos.reservas_afectadas?.length) {\n    partes.push(`${efectos.reservas_afectadas.length} reserva(s) futura(s) afectada(s): conviene reasignarlas`);\n  }\n  return partes.join('. ');\n};\nconst incidenciaId = $('Registrar incidencia').first().json.incidencia_id;\nconst respuesta = $input.first().json;\nconst resultado =\n  respuesta.encontrada === undefined\n    ? { clasificada: false, error: respuesta.error ?? 'el triaje no se pudo ejecutar', incidencia: null }\n    : respuesta;\n\nreturn [\n  {\n    json: {\n      status: 201,\n      body: {\n        ok: true,\n        data: { incidencia_id: incidenciaId, ...resultado },\n        message: `Incidencia #${incidenciaId} registrada y ${describirTriaje(resultado)}.`,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "f6230ed1-6f53-44f9-af4a-bee721c3bb07",
+      "position": [
+        1560,
+        200
+      ]
+    },
+    {
+      "name": "Responder incidencia creada",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "d5dc851e-2f75-4c8b-ac3b-702cb4dd110e",
+      "position": [
+        1820,
+        200
+      ]
+    },
+    {
+      "name": "Responder rechazo (reporte)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "49f0d4e8-e92f-4fc1-a749-d37294c28a05",
+      "position": [
+        1040,
+        380
+      ]
+    },
+    {
+      "name": "Nota · POST triaje",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### POST /incidencias/triaje\n`{ id }` reintenta el triaje con IA; `{ id, manual: { categoria, prioridad, area_responsable } }` clasifica a mano con el mismo control (RN-09).",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "9761a9e9-212a-44b1-ac87-c249f245d266",
+      "position": [
+        -460,
+        540
+      ]
+    },
+    {
+      "name": "POST /incidencias/triaje",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "ca633376-6e5b-48fb-a809-4d8ca36742ac",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incidencias/triaje",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cfe27672-dd92-474e-a0e2-edc6bec05bc3",
+      "position": [
+        0,
+        580
+      ]
+    },
+    {
+      "name": "Cargar incidencia (triaje)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT row_to_json(x) FROM (SELECT id, estado, triaje FROM incidencias WHERE id::text = $1) x) AS incidencia;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.id ?? '') ] }}"
+        }
+      },
+      "id": "1accee55-d7f3-4f1f-a782-bd8edbed9dcd",
+      "position": [
+        260,
+        580
+      ]
+    },
+    {
+      "name": "Validar solicitud de triaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Solicitud de (re)clasificación: con IA o manual\n//  Solo se clasifican incidencias abiertas o en proceso.\n// =====================================================================\nconst ESTADOS_CLASIFICABLES = ['abierta', 'en_proceso'];\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('POST /incidencias/triaje').first().json.body ?? {};\nconst incidencia = $input.first().json.incidencia;\n\nif (!incidencia) return respuestaError(404, 'INCIDENCIA_NO_ENCONTRADA', 'La incidencia no existe.');\nif (!ESTADOS_CLASIFICABLES.includes(incidencia.estado)) {\n  return respuestaError(\n    409,\n    'INCIDENCIA_CERRADA',\n    `La incidencia #${incidencia.id} está ${incidencia.estado}: solo se clasifican incidencias abiertas o en proceso.`,\n  );\n}\n\nlet manual = null;\nif (cuerpo.manual) {\n  manual = {\n    categoria: texto(cuerpo.manual.categoria),\n    prioridad: texto(cuerpo.manual.prioridad).toLowerCase(),\n    area_responsable: texto(cuerpo.manual.area_responsable),\n  };\n  if (!manual.categoria || !manual.prioridad || !manual.area_responsable) {\n    return respuestaError(422, 'CLASIFICACION_INCOMPLETA', 'La clasificación manual requiere categoría, prioridad y área.');\n  }\n}\n\nreturn [{ json: { ok: true, incidencia_id: incidencia.id, manual } }];\n"
+      },
+      "id": "7ed88a7e-98d8-4592-ac2b-b2d8eb4099da",
+      "position": [
+        520,
+        580
+      ]
+    },
+    {
+      "name": "¿Se puede clasificar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3e17597e-6d5b-4466-aa71-952acc322a74",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f9feedc6-40be-414a-af11-f0718557ca12",
+      "position": [
+        780,
+        580
+      ]
+    },
+    {
+      "name": "Ejecutar triaje",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusTriajeIA001",
+          "mode": "list",
+          "cachedResultName": "IA · Triaje de incidencias"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "9b3c0d18-246c-4976-a225-2117cfacf57a",
+      "position": [
+        1040,
+        500
+      ]
+    },
+    {
+      "name": "Armar respuesta del triaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Respuesta de la (re)clasificación\n// =====================================================================\n// Resume en una frase el resultado del triaje y sus efectos en otros módulos\nconst describirTriaje = (resultado) => {\n  if (!resultado.clasificada) return `quedó pendiente de triaje manual (${resultado.error})`;\n  const incidencia = resultado.incidencia;\n  const quien = resultado.origen === 'manual' ? 'clasificada manualmente' : 'clasificada por la IA';\n  const partes = [\n    `${quien} como ${incidencia.categoria_nombre}, prioridad ${incidencia.prioridad}, asignada a ${incidencia.area_nombre}`,\n  ];\n  const efectos = resultado.efectos ?? {};\n  partes.push(...(efectos.cambios ?? []));\n  if (efectos.reservas_afectadas?.length) {\n    partes.push(`${efectos.reservas_afectadas.length} reserva(s) futura(s) afectada(s): conviene reasignarlas`);\n  }\n  return partes.join('. ');\n};\nconst resultado = $input.first().json;\nconst error = (status, code, message) => [{ json: { status, body: { ok: false, error: { code, message, details: [] } } } }];\n\nif (resultado.encontrada === undefined) {\n  return error(500, 'TRIAJE_FALLIDO', `El triaje no se pudo ejecutar: ${resultado.error ?? 'error desconocido'}`);\n}\nif (!resultado.encontrada) return error(404, 'INCIDENCIA_NO_ENCONTRADA', 'La incidencia no existe.');\nif (!resultado.clasificada) {\n  return resultado.origen === 'manual'\n    ? error(422, 'CLASIFICACION_INVALIDA', resultado.error)\n    : error(502, 'IA_NO_DISPONIBLE', `La IA no pudo clasificar la incidencia: ${resultado.error}`);\n}\n\nreturn [\n  {\n    json: {\n      status: 200,\n      body: { ok: true, data: resultado, message: `Incidencia #${resultado.incidencia.id} ${describirTriaje(resultado)}.` },\n    },\n  },\n];\n"
+      },
+      "id": "e4af16b8-4e20-421b-a1cc-ec3f368e0756",
+      "position": [
+        1300,
+        500
+      ]
+    },
+    {
+      "name": "Responder triaje",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "0d48776e-31b1-465c-a161-bbcee2e13da7",
+      "position": [
+        1560,
+        500
+      ]
+    },
+    {
+      "name": "Responder rechazo (triaje)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "acd719ac-c6e6-40fb-a7b2-b5fcb79cb39d",
+      "position": [
+        1040,
+        680
+      ]
+    },
+    {
+      "name": "Nota · PATCH estado incidencia",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "### PATCH /incidencias/estado\n`{ id, estado, comentario }` — **RN-12** transiciones válidas; al resolver/cerrar se recalculan los bloqueos (**RN-11**: se rehabilita lo bloqueado).",
+        "height": 190,
+        "width": 400,
+        "color": 7
+      },
+      "id": "cafe88b2-1b9d-425a-ae88-8660ce1b8534",
+      "position": [
+        -460,
+        840
+      ]
+    },
+    {
+      "name": "PATCH /incidencias/estado",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "cf38b9a9-ed42-4b7e-aabc-6d47e4855cf8",
+      "parameters": {
+        "httpMethod": "PATCH",
+        "path": "incidencias/estado",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b8781546-7c95-4a4e-aba7-61169aef6ce2",
+      "position": [
+        0,
+        880
+      ]
+    },
+    {
+      "name": "Cargar incidencia (estado)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT row_to_json(v) FROM v_incidencias v WHERE v.id::text = $1) AS incidencia;",
+        "options": {
+          "queryReplacement": "={{ [ String($json.body.id ?? '') ] }}"
+        }
+      },
+      "id": "bdf68738-36d5-4cfe-af5d-fce90a2d60ca",
+      "position": [
+        260,
+        880
+      ]
+    },
+    {
+      "name": "Validar transición (RN-12)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  CICLO DE VIDA DE UNA INCIDENCIA (RN-12)\n//  Solo se permiten estas transiciones. Al resolver o cerrar se exige un\n//  comentario; después se recalculan los bloqueos (RN-10 / RN-11).\n// =====================================================================\nconst TRANSICIONES = {\n  abierta: ['en_proceso', 'resuelta', 'cerrada'],\n  en_proceso: ['abierta', 'resuelta'],\n  resuelta: ['cerrada', 'abierta'],\n  cerrada: [],\n};\nconst ESTADOS_QUE_EXIGEN_COMENTARIO = ['resuelta', 'cerrada'];\nconst LARGO_MINIMO_COMENTARIO = 5;\n\n// ---------------------------------------------------------------------\n//  Utilidades de validación\n// ---------------------------------------------------------------------\nconst texto = (valor) => (valor === undefined || valor === null ? '' : String(valor).trim());\nconst numero = (valor) => (texto(valor) === '' ? NaN : Number(valor));\nconst esEnteroPositivo = (valor) => Number.isInteger(valor) && valor > 0;\nconst esFecha = (valor) => {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(valor)) return false;\n  const fecha = new Date(`${valor}T00:00:00Z`);\n  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;\n};\nconst esHora = (valor) => /^([01]\\d|2[0-3]):[0-5]\\d$/.test(valor);\nconst esFechaHora = (valor) => /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/.test(valor) && esFecha(valor.slice(0, 10));\nconst aMinutos = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));\n// Suma días a \"AAAA-MM-DDTHH:MM\" (hora local del campus, sin zona horaria)\nconst sumarDias = (fechaHora, dias) => {\n  const fecha = new Date(`${fechaHora}:00Z`);\n  fecha.setUTCDate(fecha.getUTCDate() + dias);\n  return fecha.toISOString().slice(0, 16);\n};\nconst respuestaError = (status, code, message, details = []) => [\n  { json: { ok: false, status, body: { ok: false, error: { code, message, details } } } },\n];\nconst cuerpo = $('PATCH /incidencias/estado').first().json.body ?? {};\nconst incidencia = $input.first().json.incidencia;\nconst estado = texto(cuerpo.estado).toLowerCase();\nconst comentario = texto(cuerpo.comentario).slice(0, 500);\n\nif (!incidencia) return respuestaError(404, 'INCIDENCIA_NO_ENCONTRADA', 'La incidencia no existe.');\nif (!(estado in TRANSICIONES)) {\n  return respuestaError(422, 'ESTADO_INVALIDO', `Estado no válido. Usa uno de: ${Object.keys(TRANSICIONES).join(', ')}.`);\n}\nconst permitidos = TRANSICIONES[incidencia.estado] ?? [];\nif (!permitidos.includes(estado)) {\n  const opciones = permitidos.length ? `solo se permite pasar a: ${permitidos.join(', ')}` : 'es un estado final';\n  return respuestaError(\n    409,\n    'TRANSICION_INVALIDA',\n    `La incidencia #${incidencia.id} no puede pasar de \"${incidencia.estado}\" a \"${estado}\": desde \"${incidencia.estado}\" ${opciones}.`,\n    [{ regla: 'RN-12', mensaje: `Transición ${incidencia.estado} → ${estado} no permitida` }],\n  );\n}\nif (ESTADOS_QUE_EXIGEN_COMENTARIO.includes(estado) && comentario.length < LARGO_MINIMO_COMENTARIO) {\n  return respuestaError(422, 'COMENTARIO_REQUERIDO', `Para marcarla como \"${estado}\" describe cómo se solucionó.`);\n}\n\nreturn [{ json: { ok: true, id: incidencia.id, estado, comentario: comentario || `Cambio a ${estado}` } }];\n"
+      },
+      "id": "8d49500b-84fe-477c-a5fc-32931c129151",
+      "position": [
+        520,
+        880
+      ]
+    },
+    {
+      "name": "¿Transición permitida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4a70a81-e89e-4f3f-a085-db1c3aa84be1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "03518d73-188e-45ff-a3a2-456ea88c9805",
+      "position": [
+        780,
+        880
+      ]
+    },
+    {
+      "name": "Cambiar estado de la incidencia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "credentials": {
+        "postgres": {
+          "id": "campusPostgres01",
+          "name": "Postgres · Base de datos del campus"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE incidencias\n   SET estado = $2, motivo_estado = $3, origen_estado = 'usuario',\n       resuelto_en = CASE WHEN $2 IN ('resuelta', 'cerrada') THEN COALESCE(resuelto_en, LOCALTIMESTAMP(0)) END\n WHERE id = $1\nRETURNING id AS incidencia_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id, $json.estado, $json.comentario ] }}"
+        }
+      },
+      "id": "ebfa2355-fc99-44da-ad19-6cc51e6c910f",
+      "position": [
+        1040,
+        800
+      ]
+    },
+    {
+      "name": "Recalcular bloqueos (RN-11)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "campusEfectos0001",
+          "mode": "list",
+          "cachedResultName": "Incidencias · Efectos en espacios y recursos"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "22dff0d5-8894-41da-af65-fee9211ce6c6",
+      "position": [
+        1300,
+        800
+      ]
+    },
+    {
+      "name": "Armar respuesta del estado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Respuesta del cambio de estado (incluye rehabilitaciones por RN-11)\n// =====================================================================\nconst resultado = $input.first().json;\nconst id = $('Cambiar estado de la incidencia').first().json.incidencia_id;\n\nif (!resultado.incidencia) {\n  return [\n    {\n      json: {\n        status: 500,\n        body: {\n          ok: false,\n          error: {\n            code: 'EFECTOS_FALLIDOS',\n            message: `El estado de la incidencia #${id} cambió, pero no se pudieron recalcular los bloqueos: ${resultado.error ?? 'error desconocido'}`,\n            details: [],\n          },\n        },\n      },\n    },\n  ];\n}\n\nconst partes = [`Incidencia #${id} ahora está \"${resultado.incidencia.estado}\".`, ...resultado.cambios.map((c) => `${c}.`)];\nreturn [{ json: { status: 200, body: { ok: true, data: resultado, message: partes.join(' ') } } }];\n"
+      },
+      "id": "863e9d96-7539-4e1c-aea3-762e17b0c218",
+      "position": [
+        1560,
+        800
+      ]
+    },
+    {
+      "name": "Responder estado de la incidencia",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "8d7ac567-fda1-4b6c-a1ae-12d46ae4aefc",
+      "position": [
+        1820,
+        800
+      ]
+    },
+    {
+      "name": "Responder rechazo (estado incidencia)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "dea4ee4f-92f3-40ca-abc0-a8bcc292d066",
+      "position": [
+        1040,
+        980
+      ]
+    },
+    {
+      "name": "Nota · Errores de base de datos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "parameters": {
+        "content": "## Errores de base de datos\nTodas las consultas envían sus errores aquí (salida roja). Las violaciones de restricciones (p. ej. dos reservas simultáneas) se traducen a mensajes claros con su código HTTP.",
+        "height": 200,
+        "width": 400,
+        "color": 3
+      },
+      "id": "e21cdec3-805f-4114-adcd-165890d24426",
+      "position": [
+        -460,
+        1160
+      ]
+    },
+    {
+      "name": "Traducir error de base de datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  Traduce los errores de PostgreSQL a respuestas claras.\n//  Las restricciones de la base de datos son la última barrera de\n//  integridad: si dos peticiones simultáneas se saltan una regla, la base\n//  de datos rechaza la segunda y aquí se explica el motivo al usuario.\n// =====================================================================\nconst RESTRICCIONES = {\n  reservas_sin_solapamiento: [409, 'CONFLICTO_HORARIO', 'El espacio ya tiene una reserva activa que se cruza con ese horario.'],\n  espacios_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un espacio con ese código.'],\n  recursos_codigo_unico: [409, 'CODIGO_DUPLICADO', 'Ya existe un recurso con ese código.'],\n  prestamos_un_activo_por_recurso: [409, 'RECURSO_YA_PRESTADO', 'El recurso ya tiene un préstamo activo.'],\n  recursos_espacio_id_fkey: [422, 'ESPACIO_INEXISTENTE', 'El espacio indicado no existe.'],\n  espacios_capacidad_positiva: [422, 'CAPACIDAD_INVALIDA', 'La capacidad debe ser mayor que cero.'],\n  reservas_rango_horario: [422, 'HORARIO_INVALIDO', 'La hora de fin debe ser posterior a la de inicio.'],\n  prestamos_limite_posterior: [422, 'FECHA_INVALIDA', 'La fecha límite debe ser posterior a la fecha del préstamo.'],\n  incidencias_clasificacion_completa: [422, 'CLASIFICACION_INCOMPLETA', 'La clasificación requiere categoría, prioridad y área.'],\n};\n\nconst fallo = $input.first().json;\nconst detalle = `${fallo.message ?? ''} ${fallo.error?.description ?? ''}`;\n\nconst restriccion = Object.keys(RESTRICCIONES).find((nombre) => detalle.includes(nombre));\nif (restriccion) {\n  const [status, code, message] = RESTRICCIONES[restriccion];\n  return [{ json: { status, body: { ok: false, error: { code, message, details: [{ regla: 'BD', mensaje: restriccion }] } } } }];\n}\n\nconst sinConexion = /Connection refused|ECONNREFUSED|Host not found|ENOTFOUND|timed out/i.test(detalle);\nreturn [\n  {\n    json: {\n      status: sinConexion ? 503 : 500,\n      body: {\n        ok: false,\n        error: {\n          code: sinConexion ? 'BD_NO_DISPONIBLE' : 'ERROR_BASE_DE_DATOS',\n          message: sinConexion\n            ? 'La base de datos no está disponible en este momento.'\n            : 'No fue posible completar la operación en la base de datos.',\n          details: [{ regla: 'BD', mensaje: String(fallo.message ?? '').slice(0, 300) }],\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "5b4208c3-c6c9-4881-abe0-0c96f0c0a5d9",
+      "position": [
+        0,
+        1200
+      ]
+    },
+    {
+      "name": "Responder error de BD",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      },
+      "id": "84904a93-b1f5-4578-ab95-fe24a699c394",
+      "position": [
+        260,
+        1200
+      ]
+    }
+  ],
+  "connections": {
+    "GET /incidencias": {
+      "main": [
+        [
+          {
+            "node": "Consultar incidencias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar incidencias": {
+      "main": [
+        [
+          {
+            "node": "Responder incidencias",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /incidencias": {
+      "main": [
+        [
+          {
+            "node": "Validar referencias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar referencias": {
+      "main": [
+        [
+          {
+            "node": "Validar reporte",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar reporte": {
+      "main": [
+        [
+          {
+            "node": "¿Reporte válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Reporte válido?": {
+      "main": [
+        [
+          {
+            "node": "Registrar incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (reporte)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar incidencia": {
+      "main": [
+        [
+          {
+            "node": "Triaje con IA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triaje con IA": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta del reporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta del reporte": {
+      "main": [
+        [
+          {
+            "node": "Responder incidencia creada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /incidencias/triaje": {
+      "main": [
+        [
+          {
+            "node": "Cargar incidencia (triaje)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar incidencia (triaje)": {
+      "main": [
+        [
+          {
+            "node": "Validar solicitud de triaje",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar solicitud de triaje": {
+      "main": [
+        [
+          {
+            "node": "¿Se puede clasificar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Se puede clasificar?": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar triaje",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (triaje)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecutar triaje": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta del triaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta del triaje": {
+      "main": [
+        [
+          {
+            "node": "Responder triaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH /incidencias/estado": {
+      "main": [
+        [
+          {
+            "node": "Cargar incidencia (estado)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar incidencia (estado)": {
+      "main": [
+        [
+          {
+            "node": "Validar transición (RN-12)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar transición (RN-12)": {
+      "main": [
+        [
+          {
+            "node": "¿Transición permitida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Transición permitida?": {
+      "main": [
+        [
+          {
+            "node": "Cambiar estado de la incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder rechazo (estado incidencia)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cambiar estado de la incidencia": {
+      "main": [
+        [
+          {
+            "node": "Recalcular bloqueos (RN-11)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Traducir error de base de datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recalcular bloqueos (RN-11)": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta del estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta del estado": {
+      "main": [
+        [
+          {
+            "node": "Responder estado de la incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traducir error de base de datos": {
+      "main": [
+        [
+          {
+            "node": "Responder error de BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota",
+    "saveManualExecutions": true
+  },
+  "active": false,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "ia"
+    },
+    {
+      "name": "api"
+    },
+    {
+      "name": "modulo-3"
+    }
+  ]
+}

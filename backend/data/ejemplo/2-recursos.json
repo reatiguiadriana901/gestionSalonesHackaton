@@ -1,0 +1,16 @@
+[
+  { "codigo": "PC-001", "nombre": "Portátil Lenovo ThinkPad", "tipo": "portátil", "espacio": "L-201", "estado": "disponible" },
+  { "codigo": "PC-002", "nombre": "Portátil Lenovo ThinkPad", "tipo": "portátil", "espacio": "L-201", "estado": "disponible" },
+  { "codigo": "PC-003", "nombre": "Portátil Dell Latitude", "tipo": "portatil", "espacio": "L-201", "estado": "disponible" },
+  { "codigo": "PC-004", "nombre": "Portátil Dell Latitude", "tipo": "portatil", "espacio": "L-201", "estado": "Disponible" },
+  { "codigo": "PROY-01", "nombre": "Proyector Epson", "tipo": "proyector", "espacio": "A-101", "estado": "disponible" },
+  { "codigo": "PROY-02", "nombre": "Proyector BenQ", "tipo": "proyector", "espacio": "A-201", "estado": "disponible" },
+  { "codigo": "TAB-01", "nombre": "Tablet Samsung Galaxy", "tipo": "tablet", "estado": "disponible" },
+  { "codigo": "TAB-02", "nombre": "Tablet Samsung Galaxy", "tipo": "tablet", "estado": "en reparación" },
+  { "codigo": "CAM-01", "nombre": "Cámara web Logitech", "tipo": "cámara", "espacio": "S-301", "estado": "disponible" },
+  { "codigo": "KIT-01", "nombre": "Kit Arduino", "tipo": "kit", "espacio": "L-202", "estado": "dado de baja" },
+  { "codigo": "PC-001", "nombre": "Portátil repetido", "tipo": "portátil" },
+  { "codigo": "PC-099", "nombre": "Portátil en aula inexistente", "tipo": "portátil", "espacio": "Z-999" },
+  { "codigo": "PC-100", "nombre": "Portátil marcado como prestado", "tipo": "portátil", "estado": "prestado" },
+  { "codigo": "", "nombre": "Monitor sin código", "tipo": "monitor" }
+]

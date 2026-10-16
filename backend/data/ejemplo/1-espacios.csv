@@ -1,0 +1,13 @@
+codigo,nombre,tipo,capacidad,ubicacion,equipamiento,estado
+AUD-100,Auditorio,auditorio,100,Piso 6,"proyector, sonido, micrófonos",disponible
+A-301,Cosmos,aula,25,Piso 6,tablero,disponible
+LAB-301,Skilab,laboratorio,20,Piso 6,"computadores, proyector",disponible
+C-04,Spooki,cubículo,38,Biblioteca,tablero,disponible
+A-302,Apolo,aula,34,Piso 6,tablero,disponible
+A-103,Blanca,aula,12,Piso 6,tablero,disponible
+A-104,Azul,aula,10,Piso 6,tablero,disponible
+A-105,Amarillas verdes,aula,6,Piso 6,tablero,disponible
+A-106,Artemis,aula,32,Piso 6,tablero,disponible
+
+
+
